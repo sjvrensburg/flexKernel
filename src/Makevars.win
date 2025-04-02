@@ -1,0 +1,3 @@
+CXX_STD = CXX14
+PKG_CXXFLAGS += -Wno-ignored-attributes -O3 -march=native -flto
+PKG_LDFLAGS += -flto

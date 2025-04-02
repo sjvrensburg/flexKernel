@@ -1,0 +1,3111 @@
+Project Path: flexKernel
+
+Source Tree:
+
+```
+flexKernel
+├── README.md
+├── src
+│   ├── kernel_factory.cpp
+│   ├── Makevars
+│   ├── nystrom.h
+│   ├── kernels.cpp
+│   ├── RcppExports.cpp
+│   ├── composite_kernels.cpp
+│   ├── mini_batch_kmeans.cpp
+│   ├── composite_kernels.h
+│   ├── kernel_exports.cpp
+│   ├── mini_batch_kmeans.h
+│   ├── kernel_base.h
+│   ├── Makevars.win
+│   ├── kernel_factory.h
+│   ├── kernels.h
+│   └── nystrom.cpp
+├── NAMESPACE
+├── R
+│   ├── flexKernel-package.R
+│   ├── kernels.R
+│   ├── nystrom.R
+│   └── RcppExports.R
+├── flexKernel.Rproj
+├── flexKernel.txt
+├── man
+│   ├── scale_kernel.Rd
+│   ├── gaussian_kernel.Rd
+│   ├── mini_batch_kmeans_rcpp.Rd
+│   ├── print.kernel_spec.Rd
+│   ├── kernel_distance.Rd
+│   ├── Ops.kernel_spec.Rd
+│   ├── product_kernels.Rd
+│   ├── generate_kernel_grid.Rd
+│   ├── kernelScalar_cpp.Rd
+│   ├── computeNystromApproximation_cpp.Rd
+│   ├── kernelMatrix_cpp.Rd
+│   ├── sinc_kernel.Rd
+│   ├── sum_kernels.Rd
+│   ├── print_kernel.Rd
+│   └── kernel_matrix.Rd
+├── LICENSE.md
+└── DESCRIPTION
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/kernel_factory.cpp`:
+
+```cpp
+   1 | #include "kernel_factory.h"
+   2 | #include "composite_kernels.h"
+   3 | #include "kernels.h"
+   4 | #include <stdexcept>
+   5 | 
+   6 | namespace flexKernel
+   7 | {
+   8 | 
+   9 | std::unique_ptr<KernelBase> createKernel(const Rcpp::List &kernel_spec)
+  10 | {
+  11 |     // Check if the list has a "type" element
+  12 |     if (!kernel_spec.containsElementNamed("type"))
+  13 |     {
+  14 |         throw std::invalid_argument("Kernel specification must contain a 'type' element");
+  15 |     }
+  16 | 
+  17 |     std::string type = Rcpp::as<std::string>(kernel_spec["type"]);
+  18 | 
+  19 |     if (type == "gaussian")
+  20 |     {
+  21 |         // Check required parameters
+  22 |         if (!kernel_spec.containsElementNamed("bandwidth"))
+  23 |         {
+  24 |             throw std::invalid_argument("Gaussian kernel specification must contain a 'bandwidth' parameter");
+  25 |         }
+  26 | 
+  27 |         double bandwidth = Rcpp::as<double>(kernel_spec["bandwidth"]);
+  28 |         if (bandwidth <= 0.0)
+  29 |         {
+  30 |             throw std::invalid_argument("Bandwidth must be positive");
+  31 |         }
+  32 | 
+  33 |         return std::make_unique<GaussianKernel>(bandwidth);
+  34 |     }
+  35 |     else if (type == "sinc")
+  36 |     {
+  37 |         // Check required parameters
+  38 |         if (!kernel_spec.containsElementNamed("bandwidth"))
+  39 |         {
+  40 |             throw std::invalid_argument("Sinc kernel specification must contain a 'bandwidth' parameter");
+  41 |         }
+  42 | 
+  43 |         double bandwidth = Rcpp::as<double>(kernel_spec["bandwidth"]);
+  44 |         if (bandwidth <= 0.0)
+  45 |         {
+  46 |             throw std::invalid_argument("Bandwidth must be positive");
+  47 |         }
+  48 | 
+  49 |         return std::make_unique<SincKernel>(bandwidth);
+  50 |     }
+  51 |     else if (type == "sum")
+  52 |     {
+  53 |         // Check required parameters
+  54 |         if (!kernel_spec.containsElementNamed("kernels"))
+  55 |         {
+  56 |             throw std::invalid_argument("Sum kernel specification must contain a 'kernels' list");
+  57 |         }
+  58 | 
+  59 |         Rcpp::List kernel_list = Rcpp::as<Rcpp::List>(kernel_spec["kernels"]);
+  60 |         if (kernel_list.size() == 0)
+  61 |         {
+  62 |             throw std::invalid_argument("Sum kernel must contain at least one sub-kernel");
+  63 |         }
+  64 | 
+  65 |         std::vector<std::unique_ptr<KernelBase>> kernels;
+  66 |         kernels.reserve(kernel_list.size());
+  67 | 
+  68 |         for (R_xlen_t i = 0; i < kernel_list.size(); ++i)
+  69 |         {
+  70 |             Rcpp::List sub_kernel_spec = Rcpp::as<Rcpp::List>(kernel_list[i]);
+  71 |             kernels.push_back(createKernel(sub_kernel_spec));
+  72 |         }
+  73 | 
+  74 |         return std::make_unique<SumKernel>(std::move(kernels));
+  75 |     }
+  76 |     else if (type == "product")
+  77 |     {
+  78 |         // Check required parameters
+  79 |         if (!kernel_spec.containsElementNamed("kernels"))
+  80 |         {
+  81 |             throw std::invalid_argument("Product kernel specification must contain a 'kernels' list");
+  82 |         }
+  83 | 
+  84 |         Rcpp::List kernel_list = Rcpp::as<Rcpp::List>(kernel_spec["kernels"]);
+  85 |         if (kernel_list.size() == 0)
+  86 |         {
+  87 |             throw std::invalid_argument("Product kernel must contain at least one sub-kernel");
+  88 |         }
+  89 | 
+  90 |         std::vector<std::unique_ptr<KernelBase>> kernels;
+  91 |         kernels.reserve(kernel_list.size());
+  92 | 
+  93 |         for (R_xlen_t i = 0; i < kernel_list.size(); ++i)
+  94 |         {
+  95 |             Rcpp::List sub_kernel_spec = Rcpp::as<Rcpp::List>(kernel_list[i]);
+  96 |             kernels.push_back(createKernel(sub_kernel_spec));
+  97 |         }
+  98 | 
+  99 |         return std::make_unique<ProductKernel>(std::move(kernels));
+ 100 |     }
+ 101 |     else if (type == "scaled")
+ 102 |     {
+ 103 |         // Check required parameters
+ 104 |         if (!kernel_spec.containsElementNamed("scale"))
+ 105 |         {
+ 106 |             throw std::invalid_argument("Scaled kernel specification must contain a 'scale' parameter");
+ 107 |         }
+ 108 |         if (!kernel_spec.containsElementNamed("kernel"))
+ 109 |         {
+ 110 |             throw std::invalid_argument("Scaled kernel specification must contain a 'kernel' specification");
+ 111 |         }
+ 112 | 
+ 113 |         double scale = Rcpp::as<double>(kernel_spec["scale"]);
+ 114 |         if (scale <= 0.0)
+ 115 |         {
+ 116 |             throw std::invalid_argument("Scale must be positive");
+ 117 |         }
+ 118 | 
+ 119 |         Rcpp::List base_kernel_spec = Rcpp::as<Rcpp::List>(kernel_spec["kernel"]);
+ 120 |         std::unique_ptr<KernelBase> base_kernel = createKernel(base_kernel_spec);
+ 121 | 
+ 122 |         return std::make_unique<ScaledKernel>(scale, std::move(base_kernel));
+ 123 |     }
+ 124 |     else
+ 125 |     {
+ 126 |         throw std::invalid_argument("Unknown kernel type: " + type);
+ 127 |     }
+ 128 | }
+ 129 | 
+ 130 | } // namespace flexKernel
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/Makevars`:
+
+```
+   1 | CXX_STD = CXX14
+   2 | PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS)
+   3 | PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
+   4 | PKG_CXXFLAGS += -Wno-ignored-attributes -O3 -march=native -flto
+   5 | PKG_LDFLAGS += -flto
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/nystrom.h`:
+
+```h
+   1 | /**
+   2 |  * @file nystrom.h
+   3 |  * @brief Nystrom approximation for large-scale kernel matrices
+   4 |  *
+   5 |  * This file contains structures and functions for implementing the Nystrom
+   6 |  * approximation, which is used to efficiently approximate large kernel matrices
+   7 |  * The approximation is based on selecting a subset of landmark points and
+   8 |  * using them to construct a low-rank approximation of the full kernel matrix.
+   9 |  */
+  10 | 
+  11 | #ifndef NYSTROM_H
+  12 | #define NYSTROM_H
+  13 | 
+  14 | #include "kernel_base.h"
+  15 | #include "mini_batch_kmeans.h"
+  16 | #include <RcppEigen.h>
+  17 | 
+  18 | namespace flexKernel
+  19 | {
+  20 | 
+  21 | /**
+  22 |  * Compute landmark points for Nystrom approximation using mini-batch k-means.
+  23 |  *
+  24 |  * This function selects representative points from the dataset to use as
+  25 |  * landmarks for the Nystrom approximation. It uses a mini-batch variant of
+  26 |  * k-means clustering for efficiency on large datasets.
+  27 |  *
+  28 |  * @param X Data matrix (each row is a data point)
+  29 |  * @param num_landmarks Number of landmark points to select
+  30 |  * @param batch_size Size of mini-batches for k-means (default: 100)
+  31 |  * @param num_iterations Number of k-means iterations (default: 100)
+  32 |  * @param seed Random seed for reproducibility (default: 42)
+  33 |  * @return Matrix of landmark points (each row is a landmark)
+  34 |  * @throws std::invalid_argument if inputs are invalid
+  35 |  */
+  36 | Eigen::MatrixXd computeNystromLandmarks(const Eigen::MatrixXd &X, size_t num_landmarks, size_t batch_size = 100,
+  37 |                                   size_t num_iterations = 100, unsigned int seed = 42);
+  38 | 
+  39 | /**
+  40 |  * Structure containing the components needed for Nystrom approximation.
+  41 |  *
+  42 |  * The Nystrom approximation of a kernel matrix K is given by:
+  43 |  * K ≈ K_nm * K_mm^(-1) * K_nm^T
+  44 |  * where K_nm is the kernel matrix between data points and landmarks,
+  45 |  * and K_mm is the kernel matrix between landmarks.
+  46 |  */
+  47 | struct NystromApproximation
+  48 | {
+  49 |     Eigen::MatrixXd landmarks; ///< Landmark points (each row is a landmark)
+  50 |     Eigen::MatrixXd K_nm;      ///< Kernel matrix between data points and landmarks
+  51 |     Eigen::MatrixXd K_mm_inv;  ///< Inverse of kernel matrix between landmarks
+  52 | 
+  53 |     /**
+  54 |      * Multiply by the approximated kernel matrix without forming it explicitly.
+  55 |      *
+  56 |      * This efficiently computes K * v, where K is the approximated kernel matrix.
+  57 |      * K * v ≈ K_nm * K_mm^(-1) * K_nm^T * v
+  58 |      *
+  59 |      * @param v Vector to multiply with
+  60 |      * @return Result of K * v
+  61 |      */
+  62 |     Eigen::VectorXd multiply(const Eigen::VectorXd &v) const
+  63 |     {
+  64 |         return K_nm * (K_mm_inv * (K_nm.transpose() * v));
+  65 |     }
+  66 | 
+  67 |     /**
+  68 |      * Multiply by the approximated kernel matrix with projection.
+  69 |      *
+  70 |      * This efficiently computes P * K * v, where P is the projection matrix
+  71 |      * P = I - W(W^T W)^(-1)W^T and K is the approximated kernel matrix.
+  72 |      *
+  73 |      * @param v Vector to multiply with
+  74 |      * @param W Matrix of linear features for projection
+  75 |      * @return Result of P * K * v
+  76 |      */
+  77 |     Eigen::VectorXd multiplyWithProjection(const Eigen::VectorXd &v, const Eigen::MatrixXd &W) const
+  78 |     {
+  79 |         // Calculate W(W^T W)^(-1)W^T * v
+  80 |         Eigen::MatrixXd WtW = W.transpose() * W;
+  81 |         Eigen::VectorXd Wv = W.transpose() * v;
+  82 |         Eigen::VectorXd WtW_inv_Wv = WtW.fullPivLu().solve(Wv);
+  83 |         Eigen::VectorXd W_WtW_inv_Wv = W * WtW_inv_Wv;
+  84 | 
+  85 |         // Return (I - W(W^T W)^(-1)W^T) * K * v
+  86 |         return multiply(v - W_WtW_inv_Wv);
+  87 |     }
+  88 | 
+  89 |     /**
+  90 |      * Multiply the validation-to-training kernel matrix by a vector using Nyström approximation.
+  91 |      *
+  92 |      * This efficiently computes K_val_train * v, where K_val_train is the kernel matrix
+  93 |      * between validation points and training points, approximated as:
+  94 |      * K_val_train ≈ K_val_m * K_mm^(-1) * K_nm^T
+  95 |      *
+  96 |      * @param X_val Validation data matrix (each row is a validation point)
+  97 |      * @param v Vector to multiply with (typically alpha coefficients)
+  98 |      * @param kernel Kernel object to compute K_val_m
+  99 |      * @return Result of K_val_train * v
+ 100 |      */
+ 101 |     Eigen::VectorXd multiplyValidation(const Eigen::MatrixXd &X_val, const Eigen::VectorXd &v, const KernelBase &kernel) const
+ 102 |     {
+ 103 |         // Validate input dimensions
+ 104 |         if (X_val.cols() != landmarks.cols())
+ 105 |         {
+ 106 |             throw std::invalid_argument("Validation data must have the same number of features as landmarks");
+ 107 |         }
+ 108 |         if (v.size() != K_nm.rows())
+ 109 |         {
+ 110 |             throw std::invalid_argument("Vector length must match the number of training points");
+ 111 |         }
+ 112 | 
+ 113 |         // Compute K_val_m: kernel matrix between validation points and landmarks
+ 114 |         Eigen::MatrixXd K_val_m;
+ 115 |         kernel.evaluateSubmatrix(X_val, landmarks, K_val_m);
+ 116 | 
+ 117 |         // Approximate K_val_train * v = K_val_m * K_mm^(-1) * K_nm^T * v
+ 118 |         return K_val_m * (K_mm_inv * (K_nm.transpose() * v));
+ 119 |     }
+ 120 | };
+ 121 | 
+ 122 | /**
+ 123 |  * Compute the Nystrom approximation for a kernel matrix.
+ 124 |  *
+ 125 |  * This function computes the components needed for the Nystrom approximation
+ 126 |  * of a kernel matrix using the specified landmark points and kernel function.
+ 127 |  *
+ 128 |  * @param X Data matrix (each row is a data point)
+ 129 |  * @param landmarks Landmark points (each row is a landmark)
+ 130 |  * @param kernel Kernel object to use
+ 131 |  * @param regularization Regularization parameter for numerical stability (default: 1e-6)
+ 132 |  * @return NystromApproximation structure containing the approximation components
+ 133 |  * @throws std::invalid_argument if inputs are invalid
+ 134 |  */
+ 135 | NystromApproximation computeNystromApproximation(const Eigen::MatrixXd &X, const Eigen::MatrixXd &landmarks,
+ 136 |                                                  const KernelBase &kernel, double regularization = 1e-6);
+ 137 | 
+ 138 | } // namespace flexKernel
+ 139 | 
+ 140 | #endif // NYSTROM_H
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/kernels.cpp`:
+
+```cpp
+   1 | #include "kernels.h"
+   2 | #include <sstream>
+   3 | #include <stdexcept>
+   4 | 
+   5 | namespace flexKernel
+   6 | {
+   7 | 
+   8 | // GaussianKernel implementation
+   9 | GaussianKernel::GaussianKernel(double bandwidth) : bandwidth(bandwidth)
+  10 | {
+  11 |     if (bandwidth <= 0.0)
+  12 |     {
+  13 |         throw std::invalid_argument("Bandwidth must be positive");
+  14 |     }
+  15 | }
+  16 | 
+  17 | void GaussianKernel::evaluateSubmatrix(const Eigen::MatrixXd &X1, const Eigen::MatrixXd &X2, Eigen::MatrixXd &K) const
+  18 | {
+  19 | 
+  20 |     if (X1.cols() != X2.cols())
+  21 |     {
+  22 |         throw std::invalid_argument("X1 and X2 must have the same number of columns");
+  23 |     }
+  24 | 
+  25 |     auto const n1 = X1.rows();
+  26 |     auto const n2 = X2.rows();
+  27 | 
+  28 |     // Resize output matrix if needed
+  29 |     if (K.rows() != n1 || K.cols() != n2)
+  30 |     {
+  31 |         K.resize(n1, n2);
+  32 |     }
+  33 | 
+  34 |     // Option 1: Direct computation for small matrices
+  35 |     // Precompute 1/(2*bandwidth^2) for efficiency
+  36 |     const double scale = 1.0 / (2.0 * bandwidth * bandwidth);
+  37 | 
+  38 |     if (n1 < 100 || n2 < 100)
+  39 |     {
+  40 |         // Direct computation for small matrices
+  41 |         for (int i = 0; i < n1; ++i)
+  42 |         {
+  43 |             const Eigen::VectorXd &x1i = X1.row(i);
+  44 | 
+  45 |             for (int j = 0; j < n2; ++j)
+  46 |             {
+  47 |                 const Eigen::VectorXd &x2j = X2.row(j);
+  48 | 
+  49 |                 // Compute squared Euclidean distance
+  50 |                 double dist_sq = (x1i - x2j).squaredNorm();
+  51 | 
+  52 |                 // Apply Gaussian kernel
+  53 |                 K(i, j) = std::exp(-dist_sq * scale);
+  54 |             }
+  55 |         }
+  56 |     }
+  57 |     else
+  58 |     {
+  59 |         // Option 2: Vectorized computation for large matrices
+  60 |         // Uses identity ||x-y||^2 = ||x||^2 + ||y||^2 - 2*x^T*y
+  61 |         Eigen::VectorXd sqnorm1 = X1.rowwise().squaredNorm();
+  62 |         Eigen::VectorXd sqnorm2 = X2.rowwise().squaredNorm();
+  63 | 
+  64 |         // Compute distance matrix: sqnorm1_i + sqnorm2_j - 2*X1_i*X2_j^T
+  65 |         K = -2 * X1 * X2.transpose();
+  66 |         K.rowwise() += sqnorm1.transpose();  // Add row vector to each row
+  67 |         K.colwise() += sqnorm2;              // Add column vector to each column
+  68 | 
+  69 |         // Apply exponential function
+  70 |         K = (-K * scale).array().exp();
+  71 |     }
+  72 | }
+  73 | 
+  74 | void GaussianKernel::multiplyInPlace(const Eigen::MatrixXd &X, const Eigen::VectorXd &v, Eigen::VectorXd &result) const
+  75 | {
+  76 | 
+  77 |     if (X.rows() != v.size())
+  78 |     {
+  79 |         throw std::invalid_argument("X.rows() must match v.size()");
+  80 |     }
+  81 | 
+  82 |     const int n = X.rows();
+  83 | 
+  84 |     // Resize output vector if needed
+  85 |     if (result.size() != n)
+  86 |     {
+  87 |         result.resize(n);
+  88 |     }
+  89 | 
+  90 |     result.setZero(); // Initialize result vector to zeros
+  91 |     const double scale = 1.0 / (2.0 * bandwidth * bandwidth);
+  92 | 
+  93 |     // Perform matrix-vector multiplication without explicitly forming K
+  94 |     for (int i = 0; i < n; ++i)
+  95 |     {
+  96 |         const Eigen::VectorXd &xi = X.row(i);
+  97 | 
+  98 |         for (int j = 0; j < n; ++j)
+  99 |         {
+ 100 |             const Eigen::VectorXd &xj = X.row(j);
+ 101 | 
+ 102 |             // Compute squared Euclidean distance
+ 103 |             double dist_sq = (xi - xj).squaredNorm();
+ 104 | 
+ 105 |             // Apply Gaussian kernel and accumulate
+ 106 |             result(i) += v(j) * std::exp(-dist_sq * scale);
+ 107 |         }
+ 108 |     }
+ 109 | }
+ 110 | 
+ 111 | double GaussianKernel::evaluateScalar(const Eigen::VectorXd &x1, const Eigen::VectorXd &x2) const
+ 112 | {
+ 113 | 
+ 114 |     if (x1.size() != x2.size())
+ 115 |     {
+ 116 |         throw std::invalid_argument("Vectors must have the same dimension");
+ 117 |     }
+ 118 | 
+ 119 |     // Compute squared Euclidean distance
+ 120 |     double dist_sq = (x1 - x2).squaredNorm();
+ 121 | 
+ 122 |     // Apply Gaussian kernel function: exp(-||x-y||^2 / (2*sigma^2))
+ 123 |     return std::exp(-dist_sq / (2.0 * bandwidth * bandwidth));
+ 124 | }
+ 125 | 
+ 126 | std::unique_ptr<KernelBase> GaussianKernel::clone() const
+ 127 | {
+ 128 |     return std::make_unique<GaussianKernel>(bandwidth);
+ 129 | }
+ 130 | 
+ 131 | std::string GaussianKernel::toString() const
+ 132 | {
+ 133 |     std::ostringstream oss;
+ 134 |     oss << "GaussianKernel(bandwidth=" << bandwidth << ")";
+ 135 |     return oss.str();
+ 136 | }
+ 137 | 
+ 138 | // SincKernel implementation
+ 139 | SincKernel::SincKernel(double bandwidth) : bandwidth(bandwidth)
+ 140 | {
+ 141 |     if (bandwidth <= 0.0)
+ 142 |     {
+ 143 |         throw std::invalid_argument("Bandwidth must be positive");
+ 144 |     }
+ 145 | }
+ 146 | 
+ 147 | void SincKernel::evaluateSubmatrix(const Eigen::MatrixXd &X1, const Eigen::MatrixXd &X2, Eigen::MatrixXd &K) const
+ 148 | {
+ 149 | 
+ 150 |     if (X1.cols() != X2.cols())
+ 151 |     {
+ 152 |         throw std::invalid_argument("X1 and X2 must have the same number of columns");
+ 153 |     }
+ 154 | 
+ 155 |     const int n1 = X1.rows();
+ 156 |     const int n2 = X2.rows();
+ 157 |     const int d = X1.cols();
+ 158 | 
+ 159 |     // Resize output matrix if needed
+ 160 |     if (K.rows() != n1 || K.cols() != n2)
+ 161 |     {
+ 162 |         K.resize(n1, n2);
+ 163 |     }
+ 164 | 
+ 165 |     // Initialize K to ones (for product)
+ 166 |     K.setOnes();
+ 167 | 
+ 168 |     // For each dimension, compute sinc values and update K
+ 169 |     for (int k = 0; k < d; ++k)
+ 170 |     {
+ 171 |         // Create matrices of differences
+ 172 |         Eigen::MatrixXd diff_d = X1.col(k).replicate(1, n2) - X2.col(k).transpose().replicate(n1, 1);
+ 173 | 
+ 174 |         // Scale by bandwidth
+ 175 |         diff_d /= bandwidth;
+ 176 | 
+ 177 |         // Apply sinc function and multiply into K
+ 178 |         for (int i = 0; i < n1; ++i)
+ 179 |         {
+ 180 |             for (int j = 0; j < n2; ++j)
+ 181 |             {
+ 182 |                 K(i, j) *= sinc(diff_d(i, j));
+ 183 |             }
+ 184 |         }
+ 185 |     }
+ 186 | }
+ 187 | 
+ 188 | void SincKernel::multiplyInPlace(const Eigen::MatrixXd &X, const Eigen::VectorXd &v, Eigen::VectorXd &result) const
+ 189 | {
+ 190 | 
+ 191 |     if (X.rows() != v.size())
+ 192 |     {
+ 193 |         throw std::invalid_argument("X.rows() must match v.size()");
+ 194 |     }
+ 195 | 
+ 196 |     const int n = X.rows();
+ 197 |     const int d = X.cols();
+ 198 | 
+ 199 |     // Resize output vector if needed
+ 200 |     if (result.size() != n)
+ 201 |     {
+ 202 |         result.resize(n);
+ 203 |     }
+ 204 | 
+ 205 |     result.setZero(); // Initialize result vector to zeros
+ 206 | 
+ 207 |     // Perform matrix-vector multiplication without explicitly forming K
+ 208 |     for (int i = 0; i < n; ++i)
+ 209 |     {
+ 210 |         const Eigen::VectorXd &xi = X.row(i);
+ 211 | 
+ 212 |         for (int j = 0; j < n; ++j)
+ 213 |         {
+ 214 |             const Eigen::VectorXd &xj = X.row(j);
+ 215 | 
+ 216 |             // Compute product of sinc values for each dimension
+ 217 |             double kernel_val = 1.0;
+ 218 |             for (int k = 0; k < d; ++k)
+ 219 |             {
+ 220 |                 kernel_val *= sinc((xi(k) - xj(k)) / bandwidth);
+ 221 |             }
+ 222 | 
+ 223 |             // Accumulate result
+ 224 |             result(i) += v(j) * kernel_val;
+ 225 |         }
+ 226 |     }
+ 227 | }
+ 228 | 
+ 229 | double SincKernel::evaluateScalar(const Eigen::VectorXd &x1, const Eigen::VectorXd &x2) const
+ 230 | {
+ 231 | 
+ 232 |     if (x1.size() != x2.size())
+ 233 |     {
+ 234 |         throw std::invalid_argument("Vectors must have the same dimension");
+ 235 |     }
+ 236 | 
+ 237 |     // Compute product of sinc values for each dimension
+ 238 |     double kernel_val = 1.0;
+ 239 |     for (size_t d = 0; d < x1.size(); ++d)
+ 240 |     {
+ 241 |         double diff = x1(d) - x2(d);
+ 242 |         kernel_val *= sinc(diff / bandwidth);
+ 243 |     }
+ 244 | 
+ 245 |     return kernel_val;
+ 246 | }
+ 247 | 
+ 248 | std::unique_ptr<KernelBase> SincKernel::clone() const
+ 249 | {
+ 250 |     return std::make_unique<SincKernel>(bandwidth);
+ 251 | }
+ 252 | 
+ 253 | std::string SincKernel::toString() const
+ 254 | {
+ 255 |     std::ostringstream oss;
+ 256 |     oss << "SincKernel(bandwidth=" << bandwidth << ")";
+ 257 |     return oss.str();
+ 258 | }
+ 259 | 
+ 260 | } // namespace flexKernel
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/RcppExports.cpp`:
+
+```cpp
+   1 | // Generated by using Rcpp::compileAttributes() -> do not edit by hand
+   2 | // Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
+   3 | 
+   4 | #include <RcppEigen.h>
+   5 | #include <Rcpp.h>
+   6 | 
+   7 | using namespace Rcpp;
+   8 | 
+   9 | #ifdef RCPP_USE_GLOBAL_ROSTREAM
+  10 | Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
+  11 | Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
+  12 | #endif
+  13 | 
+  14 | // kernelMatrix_cpp
+  15 | Eigen::MatrixXd kernelMatrix_cpp(const Eigen::MatrixXd& X1, const Eigen::MatrixXd& X2, const Rcpp::List& kernel_spec);
+  16 | RcppExport SEXP _flexKernel_kernelMatrix_cpp(SEXP X1SEXP, SEXP X2SEXP, SEXP kernel_specSEXP) {
+  17 | BEGIN_RCPP
+  18 |     Rcpp::RObject rcpp_result_gen;
+  19 |     Rcpp::RNGScope rcpp_rngScope_gen;
+  20 |     Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type X1(X1SEXP);
+  21 |     Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type X2(X2SEXP);
+  22 |     Rcpp::traits::input_parameter< const Rcpp::List& >::type kernel_spec(kernel_specSEXP);
+  23 |     rcpp_result_gen = Rcpp::wrap(kernelMatrix_cpp(X1, X2, kernel_spec));
+  24 |     return rcpp_result_gen;
+  25 | END_RCPP
+  26 | }
+  27 | // computeNystromApproximation_cpp
+  28 | Rcpp::List computeNystromApproximation_cpp(const Eigen::MatrixXd& X, int num_landmarks, const Rcpp::List& kernel_spec, double regularization, int batch_size, int max_iterations, unsigned int seed);
+  29 | RcppExport SEXP _flexKernel_computeNystromApproximation_cpp(SEXP XSEXP, SEXP num_landmarksSEXP, SEXP kernel_specSEXP, SEXP regularizationSEXP, SEXP batch_sizeSEXP, SEXP max_iterationsSEXP, SEXP seedSEXP) {
+  30 | BEGIN_RCPP
+  31 |     Rcpp::RObject rcpp_result_gen;
+  32 |     Rcpp::RNGScope rcpp_rngScope_gen;
+  33 |     Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type X(XSEXP);
+  34 |     Rcpp::traits::input_parameter< int >::type num_landmarks(num_landmarksSEXP);
+  35 |     Rcpp::traits::input_parameter< const Rcpp::List& >::type kernel_spec(kernel_specSEXP);
+  36 |     Rcpp::traits::input_parameter< double >::type regularization(regularizationSEXP);
+  37 |     Rcpp::traits::input_parameter< int >::type batch_size(batch_sizeSEXP);
+  38 |     Rcpp::traits::input_parameter< int >::type max_iterations(max_iterationsSEXP);
+  39 |     Rcpp::traits::input_parameter< unsigned int >::type seed(seedSEXP);
+  40 |     rcpp_result_gen = Rcpp::wrap(computeNystromApproximation_cpp(X, num_landmarks, kernel_spec, regularization, batch_size, max_iterations, seed));
+  41 |     return rcpp_result_gen;
+  42 | END_RCPP
+  43 | }
+  44 | // kernelScalar_cpp
+  45 | double kernelScalar_cpp(const Eigen::VectorXd& x1, const Eigen::VectorXd& x2, const Rcpp::List& kernel_spec);
+  46 | RcppExport SEXP _flexKernel_kernelScalar_cpp(SEXP x1SEXP, SEXP x2SEXP, SEXP kernel_specSEXP) {
+  47 | BEGIN_RCPP
+  48 |     Rcpp::RObject rcpp_result_gen;
+  49 |     Rcpp::RNGScope rcpp_rngScope_gen;
+  50 |     Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type x1(x1SEXP);
+  51 |     Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type x2(x2SEXP);
+  52 |     Rcpp::traits::input_parameter< const Rcpp::List& >::type kernel_spec(kernel_specSEXP);
+  53 |     rcpp_result_gen = Rcpp::wrap(kernelScalar_cpp(x1, x2, kernel_spec));
+  54 |     return rcpp_result_gen;
+  55 | END_RCPP
+  56 | }
+  57 | // mini_batch_kmeans_rcpp
+  58 | Rcpp::List mini_batch_kmeans_rcpp(const Rcpp::NumericMatrix& XR, const int k, const int batch_size, const int max_epochs, const int num_threads);
+  59 | RcppExport SEXP _flexKernel_mini_batch_kmeans_rcpp(SEXP XRSEXP, SEXP kSEXP, SEXP batch_sizeSEXP, SEXP max_epochsSEXP, SEXP num_threadsSEXP) {
+  60 | BEGIN_RCPP
+  61 |     Rcpp::RObject rcpp_result_gen;
+  62 |     Rcpp::RNGScope rcpp_rngScope_gen;
+  63 |     Rcpp::traits::input_parameter< const Rcpp::NumericMatrix& >::type XR(XRSEXP);
+  64 |     Rcpp::traits::input_parameter< const int >::type k(kSEXP);
+  65 |     Rcpp::traits::input_parameter< const int >::type batch_size(batch_sizeSEXP);
+  66 |     Rcpp::traits::input_parameter< const int >::type max_epochs(max_epochsSEXP);
+  67 |     Rcpp::traits::input_parameter< const int >::type num_threads(num_threadsSEXP);
+  68 |     rcpp_result_gen = Rcpp::wrap(mini_batch_kmeans_rcpp(XR, k, batch_size, max_epochs, num_threads));
+  69 |     return rcpp_result_gen;
+  70 | END_RCPP
+  71 | }
+  72 | 
+  73 | static const R_CallMethodDef CallEntries[] = {
+  74 |     {"_flexKernel_kernelMatrix_cpp", (DL_FUNC) &_flexKernel_kernelMatrix_cpp, 3},
+  75 |     {"_flexKernel_computeNystromApproximation_cpp", (DL_FUNC) &_flexKernel_computeNystromApproximation_cpp, 7},
+  76 |     {"_flexKernel_kernelScalar_cpp", (DL_FUNC) &_flexKernel_kernelScalar_cpp, 3},
+  77 |     {"_flexKernel_mini_batch_kmeans_rcpp", (DL_FUNC) &_flexKernel_mini_batch_kmeans_rcpp, 5},
+  78 |     {NULL, NULL, 0}
+  79 | };
+  80 | 
+  81 | RcppExport void R_init_flexKernel(DllInfo *dll) {
+  82 |     R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
+  83 |     R_useDynamicSymbols(dll, FALSE);
+  84 | }
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/composite_kernels.cpp`:
+
+```cpp
+   1 | #include "composite_kernels.h"
+   2 | #include <sstream>
+   3 | #include <stdexcept>
+   4 | 
+   5 | namespace flexKernel
+   6 | {
+   7 | 
+   8 | // SumKernel implementation
+   9 | SumKernel::SumKernel(std::vector<std::unique_ptr<KernelBase>> kernels)
+  10 | {
+  11 |     if (kernels.empty())
+  12 |     {
+  13 |         throw std::invalid_argument("Cannot create a sum kernel with empty kernels vector");
+  14 |     }
+  15 | 
+  16 |     for (auto &kernel : kernels)
+  17 |     {
+  18 |         if (!kernel)
+  19 |         {
+  20 |             throw std::invalid_argument("Null kernel pointer in kernels vector");
+  21 |         }
+  22 |         this->kernels.push_back(kernel->clone());
+  23 |     }
+  24 | }
+  25 | 
+  26 | void SumKernel::addKernel(std::unique_ptr<KernelBase> kernel)
+  27 | {
+  28 |     if (!kernel)
+  29 |     {
+  30 |         throw std::invalid_argument("Cannot add null kernel pointer");
+  31 |     }
+  32 |     kernels.push_back(std::move(kernel));
+  33 | }
+  34 | 
+  35 | void SumKernel::evaluateSubmatrix(const Eigen::MatrixXd &X1, const Eigen::MatrixXd &X2, Eigen::MatrixXd &K) const
+  36 | {
+  37 | 
+  38 |     if (X1.cols() != X2.cols())
+  39 |     {
+  40 |         throw std::invalid_argument("X1 and X2 must have the same number of columns");
+  41 |     }
+  42 | 
+  43 |     if (kernels.empty())
+  44 |     {
+  45 |         // Empty sum kernel returns zeros
+  46 |         K.setZero(X1.rows(), X2.rows());
+  47 |         return;
+  48 |     }
+  49 | 
+  50 |     const int n1 = X1.rows();
+  51 |     const int n2 = X2.rows();
+  52 | 
+  53 |     // Resize output matrix if needed
+  54 |     if (K.rows() != n1 || K.cols() != n2)
+  55 |     {
+  56 |         K.resize(n1, n2);
+  57 |     }
+  58 | 
+  59 |     K.setZero(); // Initialize output matrix to zeros
+  60 | 
+  61 |     // Temporary matrix for individual kernel evaluations
+  62 |     Eigen::MatrixXd K_temp(n1, n2);
+  63 | 
+  64 |     // Sum up all kernel evaluations
+  65 |     for (const auto &kernel : kernels)
+  66 |     {
+  67 |         kernel->evaluateSubmatrix(X1, X2, K_temp);
+  68 |         K += K_temp;
+  69 |     }
+  70 | }
+  71 | 
+  72 | void SumKernel::multiplyInPlace(const Eigen::MatrixXd &X, const Eigen::VectorXd &v, Eigen::VectorXd &result) const
+  73 | {
+  74 | 
+  75 |     if (X.rows() != v.size())
+  76 |     {
+  77 |         throw std::invalid_argument("X.rows() must match v.size()");
+  78 |     }
+  79 | 
+  80 |     const int n = X.rows();
+  81 | 
+  82 |     // Resize output vector if needed
+  83 |     if (result.size() != n)
+  84 |     {
+  85 |         result.resize(n);
+  86 |     }
+  87 | 
+  88 |     result.setZero(); // Initialize result vector to zeros
+  89 | 
+  90 |     if (kernels.empty())
+  91 |     {
+  92 |         return; // Empty sum kernel returns zeros
+  93 |     }
+  94 | 
+  95 |     // Temporary vector for individual kernel multiplications
+  96 |     Eigen::VectorXd temp_result(n);
+  97 | 
+  98 |     // Sum up all kernel-vector multiplications
+  99 |     for (const auto &kernel : kernels)
+ 100 |     {
+ 101 |         kernel->multiplyInPlace(X, v, temp_result);
+ 102 |         result += temp_result;
+ 103 |     }
+ 104 | }
+ 105 | 
+ 106 | double SumKernel::evaluateScalar(const Eigen::VectorXd &x1, const Eigen::VectorXd &x2) const
+ 107 | {
+ 108 | 
+ 109 |     if (x1.size() != x2.size())
+ 110 |     {
+ 111 |         throw std::invalid_argument("Vectors must have the same dimension");
+ 112 |     }
+ 113 | 
+ 114 |     if (kernels.empty())
+ 115 |     {
+ 116 |         return 0.0; // Empty sum is zero
+ 117 |     }
+ 118 | 
+ 119 |     double sum = 0.0;
+ 120 |     for (const auto &kernel : kernels)
+ 121 |     {
+ 122 |         sum += kernel->evaluateScalar(x1, x2);
+ 123 |     }
+ 124 |     return sum;
+ 125 | }
+ 126 | 
+ 127 | std::unique_ptr<KernelBase> SumKernel::clone() const
+ 128 | {
+ 129 |     std::vector<std::unique_ptr<KernelBase>> cloned_kernels;
+ 130 |     cloned_kernels.reserve(kernels.size());
+ 131 | 
+ 132 |     for (const auto &kernel : kernels)
+ 133 |     {
+ 134 |         cloned_kernels.push_back(kernel->clone());
+ 135 |     }
+ 136 | 
+ 137 |     return std::make_unique<SumKernel>(std::move(cloned_kernels));
+ 138 | }
+ 139 | 
+ 140 | std::string SumKernel::toString() const
+ 141 | {
+ 142 |     std::ostringstream oss;
+ 143 |     oss << "SumKernel(";
+ 144 | 
+ 145 |     if (kernels.empty())
+ 146 |     {
+ 147 |         oss << "empty";
+ 148 |     }
+ 149 |     else
+ 150 |     {
+ 151 |         for (size_t i = 0; i < kernels.size(); ++i)
+ 152 |         {
+ 153 |             if (i > 0)
+ 154 |             {
+ 155 |                 oss << " + ";
+ 156 |             }
+ 157 |             oss << kernels[i]->toString();
+ 158 |         }
+ 159 |     }
+ 160 | 
+ 161 |     oss << ")";
+ 162 |     return oss.str();
+ 163 | }
+ 164 | 
+ 165 | // ProductKernel implementation
+ 166 | ProductKernel::ProductKernel(std::vector<std::unique_ptr<KernelBase>> kernels)
+ 167 | {
+ 168 |     if (kernels.empty())
+ 169 |     {
+ 170 |         throw std::invalid_argument("Cannot create a product kernel with empty kernels vector");
+ 171 |     }
+ 172 | 
+ 173 |     for (auto &kernel : kernels)
+ 174 |     {
+ 175 |         if (!kernel)
+ 176 |         {
+ 177 |             throw std::invalid_argument("Null kernel pointer in kernels vector");
+ 178 |         }
+ 179 |         this->kernels.push_back(kernel->clone());
+ 180 |     }
+ 181 | }
+ 182 | 
+ 183 | void ProductKernel::addKernel(std::unique_ptr<KernelBase> kernel)
+ 184 | {
+ 185 |     if (!kernel)
+ 186 |     {
+ 187 |         throw std::invalid_argument("Cannot add null kernel pointer");
+ 188 |     }
+ 189 |     kernels.push_back(std::move(kernel));
+ 190 | }
+ 191 | 
+ 192 | void ProductKernel::evaluateSubmatrix(const Eigen::MatrixXd &X1, const Eigen::MatrixXd &X2, Eigen::MatrixXd &K) const
+ 193 | {
+ 194 | 
+ 195 |     if (X1.cols() != X2.cols())
+ 196 |     {
+ 197 |         throw std::invalid_argument("X1 and X2 must have the same number of columns");
+ 198 |     }
+ 199 | 
+ 200 |     const int n1 = X1.rows();
+ 201 |     const int n2 = X2.rows();
+ 202 | 
+ 203 |     // Resize output matrix if needed
+ 204 |     if (K.rows() != n1 || K.cols() != n2)
+ 205 |     {
+ 206 |         K.resize(n1, n2);
+ 207 |     }
+ 208 | 
+ 209 |     if (kernels.empty())
+ 210 |     {
+ 211 |         K.setOnes(); // Empty product is one
+ 212 |         return;
+ 213 |     }
+ 214 | 
+ 215 |     // Initialize with the first kernel
+ 216 |     kernels[0]->evaluateSubmatrix(X1, X2, K);
+ 217 | 
+ 218 |     // Temporary matrix for subsequent kernel evaluations
+ 219 |     Eigen::MatrixXd K_temp(n1, n2);
+ 220 | 
+ 221 |     // Multiply by all remaining kernels
+ 222 |     for (size_t i = 1; i < kernels.size(); ++i)
+ 223 |     {
+ 224 |         kernels[i]->evaluateSubmatrix(X1, X2, K_temp);
+ 225 |         K.array() *= K_temp.array(); // Element-wise multiplication
+ 226 |     }
+ 227 | }
+ 228 | 
+ 229 | void ProductKernel::multiplyInPlace(const Eigen::MatrixXd &X, const Eigen::VectorXd &v, Eigen::VectorXd &result) const
+ 230 | {
+ 231 | 
+ 232 |     if (X.rows() != v.size())
+ 233 |     {
+ 234 |         throw std::invalid_argument("X.rows() must match v.size()");
+ 235 |     }
+ 236 | 
+ 237 |     const int n = X.rows();
+ 238 | 
+ 239 |     // For product kernels, we can't directly use the matrix-vector multiplication
+ 240 |     // trick without forming the explicit kernel matrix, so we form the matrix.
+ 241 |     // This is less efficient but maintains correctness.
+ 242 | 
+ 243 |     // Compute the full kernel matrix
+ 244 |     Eigen::MatrixXd K(n, n);
+ 245 |     evaluateSubmatrix(X, X, K);
+ 246 | 
+ 247 |     // Resize output vector if needed
+ 248 |     if (result.size() != n)
+ 249 |     {
+ 250 |         result.resize(n);
+ 251 |     }
+ 252 | 
+ 253 |     // Perform matrix-vector multiplication
+ 254 |     result = K * v;
+ 255 | }
+ 256 | 
+ 257 | double ProductKernel::evaluateScalar(const Eigen::VectorXd &x1, const Eigen::VectorXd &x2) const
+ 258 | {
+ 259 | 
+ 260 |     if (x1.size() != x2.size())
+ 261 |     {
+ 262 |         throw std::invalid_argument("Vectors must have the same dimension");
+ 263 |     }
+ 264 | 
+ 265 |     if (kernels.empty())
+ 266 |     {
+ 267 |         return 1.0; // Empty product is one
+ 268 |     }
+ 269 | 
+ 270 |     double product = 1.0;
+ 271 |     for (const auto &kernel : kernels)
+ 272 |     {
+ 273 |         product *= kernel->evaluateScalar(x1, x2);
+ 274 |     }
+ 275 |     return product;
+ 276 | }
+ 277 | 
+ 278 | std::unique_ptr<KernelBase> ProductKernel::clone() const
+ 279 | {
+ 280 |     std::vector<std::unique_ptr<KernelBase>> cloned_kernels;
+ 281 |     cloned_kernels.reserve(kernels.size());
+ 282 | 
+ 283 |     for (const auto &kernel : kernels)
+ 284 |     {
+ 285 |         cloned_kernels.push_back(kernel->clone());
+ 286 |     }
+ 287 | 
+ 288 |     return std::make_unique<ProductKernel>(std::move(cloned_kernels));
+ 289 | }
+ 290 | 
+ 291 | std::string ProductKernel::toString() const
+ 292 | {
+ 293 |     std::ostringstream oss;
+ 294 |     oss << "ProductKernel(";
+ 295 | 
+ 296 |     if (kernels.empty())
+ 297 |     {
+ 298 |         oss << "empty";
+ 299 |     }
+ 300 |     else
+ 301 |     {
+ 302 |         for (size_t i = 0; i < kernels.size(); ++i)
+ 303 |         {
+ 304 |             if (i > 0)
+ 305 |             {
+ 306 |                 oss << " * ";
+ 307 |             }
+ 308 |             oss << kernels[i]->toString();
+ 309 |         }
+ 310 |     }
+ 311 | 
+ 312 |     oss << ")";
+ 313 |     return oss.str();
+ 314 | }
+ 315 | 
+ 316 | // ScaledKernel implementation
+ 317 | ScaledKernel::ScaledKernel(double scale, std::unique_ptr<KernelBase> base_kernel)
+ 318 |     : scale(scale), base_kernel(std::move(base_kernel))
+ 319 | {
+ 320 | 
+ 321 |     if (scale <= 0.0)
+ 322 |     {
+ 323 |         throw std::invalid_argument("Scale must be positive");
+ 324 |     }
+ 325 | 
+ 326 |     if (!this->base_kernel)
+ 327 |     {
+ 328 |         throw std::invalid_argument("Base kernel cannot be null");
+ 329 |     }
+ 330 | }
+ 331 | 
+ 332 | void ScaledKernel::evaluateSubmatrix(const Eigen::MatrixXd &X1, const Eigen::MatrixXd &X2, Eigen::MatrixXd &K) const
+ 333 | {
+ 334 | 
+ 335 |     // Compute the base kernel matrix
+ 336 |     base_kernel->evaluateSubmatrix(X1, X2, K);
+ 337 | 
+ 338 |     // Scale the kernel matrix
+ 339 |     K *= scale;
+ 340 | }
+ 341 | 
+ 342 | void ScaledKernel::multiplyInPlace(const Eigen::MatrixXd &X, const Eigen::VectorXd &v, Eigen::VectorXd &result) const
+ 343 | {
+ 344 | 
+ 345 |     // Apply the base kernel's multiplication
+ 346 |     base_kernel->multiplyInPlace(X, v, result);
+ 347 | 
+ 348 |     // Scale the result
+ 349 |     result *= scale;
+ 350 | }
+ 351 | 
+ 352 | double ScaledKernel::evaluateScalar(const Eigen::VectorXd &x1, const Eigen::VectorXd &x2) const
+ 353 | {
+ 354 | 
+ 355 |     return scale * base_kernel->evaluateScalar(x1, x2);
+ 356 | }
+ 357 | 
+ 358 | std::unique_ptr<KernelBase> ScaledKernel::clone() const
+ 359 | {
+ 360 |     return std::make_unique<ScaledKernel>(scale, base_kernel->clone());
+ 361 | }
+ 362 | 
+ 363 | std::string ScaledKernel::toString() const
+ 364 | {
+ 365 |     std::ostringstream oss;
+ 366 |     oss << "ScaledKernel(scale=" << scale << ", base_kernel=" << base_kernel->toString() << ")";
+ 367 |     return oss.str();
+ 368 | }
+ 369 | 
+ 370 | } // namespace flexKernel
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/mini_batch_kmeans.cpp`:
+
+```cpp
+   1 | #include "mini_batch_kmeans.h"
+   2 | #include <limits>    // For std::numeric_limits
+   3 | 
+   4 | // [[Rcpp::depends(RcppEigen)]]
+   5 | // [[Rcpp::plugins(openmp)]]
+   6 | 
+   7 | bool mini_batch_kmeans_eigen(
+   8 |     Eigen::MatrixXd& means,
+   9 |     const Eigen::MatrixXd& X,
+  10 |     const Eigen::Index k,
+  11 |     const Eigen::Index batch_size,
+  12 |     const Eigen::Index max_epochs,
+  13 |     const int num_threads,
+  14 |     Eigen::VectorXi& cluster
+  15 | ) {
+  16 |     const Eigen::Index n_rows = X.rows();  // Number of observations
+  17 |     const Eigen::Index n_dims = X.cols();  // Number of features
+  18 | 
+  19 |     // --- Safety check
+  20 |     if (n_rows < k) {
+  21 |         Rcpp::Rcerr << "mini_batch_kmeans: number of points less than number of clusters" << std::endl;
+  22 |         return false;
+  23 |     }
+  24 | 
+  25 |     // --------------------------------------------------------------------------
+  26 |     // 1. Initialize cluster centers using k-means++
+  27 |     //    Selects initial centers to be well-separated using R's RNG for reproducibility.
+  28 |     // --------------------------------------------------------------------------
+  29 |     means.resize(k, n_dims);  // k rows (clusters) × n_dims columns (features)
+  30 | 
+  31 |     // Select the first center randomly
+  32 |     Rcpp::IntegerVector first_idx_R = Rcpp::sample(n_rows, 1, false) - 1;
+  33 |     Eigen::Index first_idx = static_cast<Eigen::Index>(first_idx_R[0]);
+  34 |     means.row(0) = X.row(first_idx);
+  35 | 
+  36 |     // Initialize min_dists with distances to the first center
+  37 |     Eigen::VectorXd min_dists(n_rows);
+  38 |     for (Eigen::Index i = 0; i < n_rows; ++i) {
+  39 |         min_dists[i] = (X.row(i) - means.row(0)).squaredNorm();
+  40 |     }
+  41 | 
+  42 |     // Select remaining centers
+  43 |     for (Eigen::Index c = 1; c < k; ++c) {
+  44 |         // Compute total sum of min_dists
+  45 |         double total_sum = min_dists.sum();
+  46 |         // Generate a random value between 0 and total_sum using R's RNG
+  47 |         double rand_val = R::runif(0, 1) * total_sum;
+  48 |         // Find the smallest index where the cumulative sum >= rand_val
+  49 |         double cumsum = 0;
+  50 |         Eigen::Index selected_idx = 0;
+  51 |         for (Eigen::Index i = 0; i < n_rows; ++i) {
+  52 |             cumsum += min_dists[i];
+  53 |             if (cumsum >= rand_val) {
+  54 |                 selected_idx = i;
+  55 |                 break;
+  56 |             }
+  57 |         }
+  58 |         // Add the selected point as the next center
+  59 |         means.row(c) = X.row(selected_idx);
+  60 |         // Update min_dists
+  61 |         for (Eigen::Index i = 0; i < n_rows; ++i) {
+  62 |             double dist = (X.row(i) - means.row(c)).squaredNorm();
+  63 |             if (dist < min_dists[i]) {
+  64 |                 min_dists[i] = dist;
+  65 |             }
+  66 |         }
+  67 |     }
+  68 | 
+  69 |     // --------------------------------------------------------------------------
+  70 |     // 2. Initialize cluster counts (for the online update)
+  71 |     // --------------------------------------------------------------------------
+  72 |     Eigen::VectorXi counts = Eigen::VectorXi::Zero(k);
+  73 | 
+  74 |     // --------------------------------------------------------------------------
+  75 |     // 3. Main loop over epochs
+  76 |     //    Each epoch processes the entire dataset in mini-batches.
+  77 |     // --------------------------------------------------------------------------
+  78 |     for (Eigen::Index epoch = 0; epoch < max_epochs; ++epoch) {
+  79 |         // (a) Shuffle all indices via R's RNG
+  80 |         Rcpp::IntegerVector shuffled_R = Rcpp::sample(n_rows, n_rows, false) - 1;
+  81 |         std::vector<Eigen::Index> shuffled_indices(n_rows);
+  82 |         for (Eigen::Index i = 0; i < n_rows; ++i) {
+  83 |             shuffled_indices[i] = static_cast<Eigen::Index>(shuffled_R[i]);
+  84 |         }
+  85 | 
+  86 |         // (b) Loop over mini-batches
+  87 |         for (Eigen::Index start_idx = 0; start_idx < n_rows; start_idx += batch_size) {
+  88 |             Eigen::Index end_idx = std::min<Eigen::Index>(start_idx + batch_size, n_rows);
+  89 |             Eigen::Index current_batch_size = end_idx - start_idx;
+  90 | 
+  91 |             // Extract the mini-batch rows
+  92 |             Eigen::MatrixXd M(current_batch_size, n_dims);
+  93 |             for (Eigen::Index i = 0; i < current_batch_size; ++i) {
+  94 |                 M.row(i) = X.row(shuffled_indices[start_idx + i]);
+  95 |             }
+  96 | 
+  97 |             // (c) Assign points to clusters and accumulate sums in parallel
+  98 |             //     Each thread processes a subset of the mini-batch points.
+  99 |             //     For each point, find the nearest cluster center and add the point
+ 100 |             //     to the local sum and count for that cluster.
+ 101 |             //     After processing, merge the local sums and counts into global accumulators.
+ 102 |             Eigen::MatrixXd acc_sums = Eigen::MatrixXd::Zero(k, n_dims);
+ 103 |             Eigen::VectorXi acc_counts = Eigen::VectorXi::Zero(k);
+ 104 | 
+ 105 |             omp_set_num_threads(num_threads);
+ 106 | 
+ 107 |             #pragma omp parallel
+ 108 |             {
+ 109 |                 // Initialize local accumulators for this thread
+ 110 |                 Eigen::MatrixXd local_sums = Eigen::MatrixXd::Zero(k, n_dims);
+ 111 |                 Eigen::VectorXi local_counts = Eigen::VectorXi::Zero(k);
+ 112 | 
+ 113 |                 // Parallel loop over the mini-batch points
+ 114 |                 #pragma omp for
+ 115 |                 for (Eigen::Index i = 0; i < current_batch_size; ++i) {
+ 116 |                     // Initialize minimum distance and best cluster
+ 117 |                     double min_dist = std::numeric_limits<double>::infinity();
+ 118 |                     Eigen::Index best_g = 0;
+ 119 |                     // Find the nearest cluster center
+ 120 |                     for (Eigen::Index g = 0; g < k; ++g) {
+ 121 |                         // Compute squared Euclidean distance between observation i and cluster center g
+ 122 |                         double dist = (M.row(i) - means.row(g)).squaredNorm();
+ 123 |                         if (dist < min_dist) {
+ 124 |                             min_dist = dist;
+ 125 |                             best_g = g;
+ 126 |                         }
+ 127 |                     }
+ 128 |                     // Add the point to the local sum and count for the best cluster
+ 129 |                     local_sums.row(best_g) += M.row(i);
+ 130 |                     local_counts[best_g]++;
+ 131 |                 }
+ 132 | 
+ 133 |                 // Merge local accumulators into global accumulators
+ 134 |                 #pragma omp critical
+ 135 |                 {
+ 136 |                     acc_sums += local_sums;
+ 137 |                     for (Eigen::Index g = 0; g < k; ++g) {
+ 138 |                         acc_counts[g] += local_counts[g];
+ 139 |                     }
+ 140 |                 }
+ 141 |             } // end parallel region
+ 142 | 
+ 143 |             // (d) Update cluster centers using the online update formula
+ 144 |             //     For each cluster, if it received points in this mini-batch (k_c > 0),
+ 145 |             //     update the center as a weighted average of the previous center and the mini-batch mean.
+ 146 |             //     Specifically, new_center = (n_c * old_center + sum_c) / (n_c + k_c)
+ 147 |             //     where n_c is the cumulative count so far, and k_c is the count in this mini-batch.
+ 148 |             //     Then, update the cumulative count: n_c += k_c
+ 149 |             for (Eigen::Index g = 0; g < k; ++g) {
+ 150 |                 int k_c = acc_counts[g]; // number of points assigned to cluster g in this mini-batch
+ 151 |                 if (k_c > 0) {
+ 152 |                     int n_c = counts[g]; // cumulative count of points assigned to cluster g so far
+ 153 |                     // Update the center
+ 154 |                     means.row(g) = (static_cast<double>(n_c) * means.row(g) + acc_sums.row(g))
+ 155 |                                   / static_cast<double>(n_c + k_c);
+ 156 |                     // Update the cumulative count
+ 157 |                     counts[g] = n_c + k_c;
+ 158 |                 }
+ 159 |             }
+ 160 |         } // end mini-batch loop
+ 161 | 
+ 162 |         // (e) Reinitialize empty clusters
+ 163 |         //     If any cluster has not been assigned any points so far (counts[g] == 0),
+ 164 |         //     reinitialize it to a random data point.
+ 165 |         for (Eigen::Index g = 0; g < k; ++g) {
+ 166 |             if (counts[g] == 0) {
+ 167 |                 // Select a random point using R's RNG
+ 168 |                 Rcpp::IntegerVector rand_idx_R = Rcpp::sample(n_rows, 1, false) - 1;
+ 169 |                 Eigen::Index rand_idx = static_cast<Eigen::Index>(rand_idx_R[0]);
+ 170 |                 means.row(g) = X.row(rand_idx);
+ 171 |             }
+ 172 |         }
+ 173 |     } // end epoch loop
+ 174 | 
+ 175 |     // --------------------------------------------------------------------------
+ 176 |     // 4. Assign each observation to its nearest cluster center
+ 177 |     // --------------------------------------------------------------------------
+ 178 | 
+ 179 |     // Initialize the cluster assignment vector
+ 180 |     cluster.resize(n_rows);
+ 181 | 
+ 182 |     // Set up OpenMP parallelization
+ 183 |     omp_set_num_threads(num_threads);
+ 184 | 
+ 185 |     // Assign each observation to the nearest cluster center
+ 186 |     #pragma omp parallel for
+ 187 |     for (Eigen::Index i = 0; i < n_rows; ++i) {
+ 188 |         double min_dist = std::numeric_limits<double>::infinity();
+ 189 |         Eigen::Index best_cluster = 0;
+ 190 | 
+ 191 |         // Find the nearest cluster center
+ 192 |         for (Eigen::Index g = 0; g < k; ++g) {
+ 193 |             double dist = (X.row(i) - means.row(g)).squaredNorm();
+ 194 |             if (dist < min_dist) {
+ 195 |                 min_dist = dist;
+ 196 |                 best_cluster = g;
+ 197 |             }
+ 198 |         }
+ 199 | 
+ 200 |         // Assign the observation to the best cluster (0-based index)
+ 201 |         cluster[i] = static_cast<int>(best_cluster);
+ 202 |     }
+ 203 | 
+ 204 |     // --------------------------------------------------------------------------
+ 205 |     // 5. Final check
+ 206 |     // --------------------------------------------------------------------------
+ 207 |     // Check if any of the means contains NaN values
+ 208 |     for (Eigen::Index i = 0; i < means.rows(); ++i) {
+ 209 |         for (Eigen::Index j = 0; j < means.cols(); ++j) {
+ 210 |             if (std::isnan(means(i, j))) {
+ 211 |                 return false;
+ 212 |             }
+ 213 |         }
+ 214 |     }
+ 215 | 
+ 216 |     return true;
+ 217 | }
+ 218 | 
+ 219 | Rcpp::List mini_batch_kmeans_rcpp(
+ 220 |     const Rcpp::NumericMatrix& XR,
+ 221 |     const int k,
+ 222 |     const int batch_size,
+ 223 |     const int max_epochs,
+ 224 |     const int num_threads
+ 225 | ) {
+ 226 |     // 1. Convert R matrix to Eigen
+ 227 |     const Eigen::Map<Eigen::MatrixXd> X(Rcpp::as<Eigen::Map<Eigen::MatrixXd> >(XR));
+ 228 | 
+ 229 |     // 2. Initialize means matrix with correct dimensions (k rows × n_dims columns)
+ 230 |     Eigen::MatrixXd means(k, X.cols());
+ 231 | 
+ 232 |     // 3. Initialize cluster assignment vector
+ 233 |     Eigen::VectorXi cluster;
+ 234 | 
+ 235 |     // 4. Run mini-batch k-means
+ 236 |     bool success = mini_batch_kmeans_eigen(
+ 237 |         means,
+ 238 |         X,
+ 239 |         static_cast<Eigen::Index>(k),
+ 240 |         static_cast<Eigen::Index>(batch_size),
+ 241 |         static_cast<Eigen::Index>(max_epochs),
+ 242 |         num_threads,
+ 243 |         cluster
+ 244 |     );
+ 245 | 
+ 246 |     // 5. Convert 0-based cluster indices to 1-based for R
+ 247 |     Eigen::VectorXi r_cluster = cluster.array() + 1;
+ 248 | 
+ 249 |     return Rcpp::List::create(
+ 250 |       Rcpp::Named("means") = means,
+ 251 |       Rcpp::Named("cluster") = r_cluster,
+ 252 |       Rcpp::Named("success") = success
+ 253 |     );
+ 254 | }
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/composite_kernels.h`:
+
+```h
+   1 | #ifndef COMPOSITE_KERNELS_H
+   2 | #define COMPOSITE_KERNELS_H
+   3 | 
+   4 | #include "kernel_base.h"
+   5 | #include <memory>
+   6 | #include <string>
+   7 | #include <vector>
+   8 | 
+   9 | namespace flexKernel
+  10 | {
+  11 | 
+  12 | /**
+  13 |  * Sum of kernels: k(x, y) = k_1(x, y) + k_2(x, y) + ... + k_n(x, y)
+  14 |  *
+  15 |  * This class combines multiple kernels through addition, which is useful for
+  16 |  * modeling functions with multiple characteristic length scales or behaviors.
+  17 |  */
+  18 | class SumKernel : public KernelBase
+  19 | {
+  20 |   private:
+  21 |     std::vector<std::unique_ptr<KernelBase>> kernels;
+  22 | 
+  23 |   public:
+  24 |     /**
+  25 |      * Create an empty sum kernel.
+  26 |      * Kernels can be added later using addKernel().
+  27 |      */
+  28 |     SumKernel() = default;
+  29 | 
+  30 |     /**
+  31 |      * Create a sum kernel from a vector of kernels.
+  32 |      *
+  33 |      * @param kernels Vector of kernels to be summed
+  34 |      */
+  35 |     explicit SumKernel(std::vector<std::unique_ptr<KernelBase>> kernels);
+  36 | 
+  37 |     /**
+  38 |      * Add a kernel to the sum.
+  39 |      *
+  40 |      * @param kernel Kernel to add
+  41 |      */
+  42 |     void addKernel(std::unique_ptr<KernelBase> kernel);
+  43 | 
+  44 |     void evaluateSubmatrix(const Eigen::MatrixXd &X1, const Eigen::MatrixXd &X2, Eigen::MatrixXd &K) const override;
+  45 | 
+  46 |     void multiplyInPlace(const Eigen::MatrixXd &X, const Eigen::VectorXd &v, Eigen::VectorXd &result) const override;
+  47 | 
+  48 |     double evaluateScalar(const Eigen::VectorXd &x1, const Eigen::VectorXd &x2) const override;
+  49 | 
+  50 |     std::unique_ptr<KernelBase> clone() const override;
+  51 | 
+  52 |     std::string toString() const override;
+  53 | 
+  54 |     // Get number of kernels
+  55 |     size_t size() const
+  56 |     {
+  57 |         return kernels.size();
+  58 |     }
+  59 | 
+  60 |     // Access individual kernels (for testing/debugging)
+  61 |     const KernelBase &getKernel(size_t idx) const
+  62 |     {
+  63 |         if (idx >= kernels.size())
+  64 |         {
+  65 |             throw std::out_of_range("Kernel index out of bounds");
+  66 |         }
+  67 |         return *kernels[idx];
+  68 |     }
+  69 | };
+  70 | 
+  71 | /**
+  72 |  * Product of kernels: k(x, y) = k_1(x, y) * k_2(x, y) * ... * k_n(x, y)
+  73 |  *
+  74 |  * This class combines multiple kernels through multiplication, which can be used to
+  75 |  * model functions that have multiple independent constraints (e.g., smoothness in
+  76 |  * some dimensions but not others).
+  77 |  */
+  78 | class ProductKernel : public KernelBase
+  79 | {
+  80 |   private:
+  81 |     std::vector<std::unique_ptr<KernelBase>> kernels;
+  82 | 
+  83 |   public:
+  84 |     /**
+  85 |      * Create an empty product kernel.
+  86 |      * Kernels can be added later using addKernel().
+  87 |      */
+  88 |     ProductKernel() = default;
+  89 | 
+  90 |     /**
+  91 |      * Create a product kernel from a vector of kernels.
+  92 |      *
+  93 |      * @param kernels Vector of kernels to be multiplied
+  94 |      */
+  95 |     explicit ProductKernel(std::vector<std::unique_ptr<KernelBase>> kernels);
+  96 | 
+  97 |     /**
+  98 |      * Add a kernel to the product.
+  99 |      *
+ 100 |      * @param kernel Kernel to add
+ 101 |      */
+ 102 |     void addKernel(std::unique_ptr<KernelBase> kernel);
+ 103 | 
+ 104 |     void evaluateSubmatrix(const Eigen::MatrixXd &X1, const Eigen::MatrixXd &X2, Eigen::MatrixXd &K) const override;
+ 105 | 
+ 106 |     void multiplyInPlace(const Eigen::MatrixXd &X, const Eigen::VectorXd &v, Eigen::VectorXd &result) const override;
+ 107 | 
+ 108 |     double evaluateScalar(const Eigen::VectorXd &x1, const Eigen::VectorXd &x2) const override;
+ 109 | 
+ 110 |     std::unique_ptr<KernelBase> clone() const override;
+ 111 | 
+ 112 |     std::string toString() const override;
+ 113 | 
+ 114 |     // Get number of kernels
+ 115 |     size_t size() const
+ 116 |     {
+ 117 |         return kernels.size();
+ 118 |     }
+ 119 | 
+ 120 |     // Access individual kernels (for testing/debugging)
+ 121 |     const KernelBase &getKernel(size_t idx) const
+ 122 |     {
+ 123 |         if (idx >= kernels.size())
+ 124 |         {
+ 125 |             throw std::out_of_range("Kernel index out of bounds");
+ 126 |         }
+ 127 |         return *kernels[idx];
+ 128 |     }
+ 129 | };
+ 130 | 
+ 131 | /**
+ 132 |  * Scaled kernel: k(x, y) = scale * k_base(x, y)
+ 133 |  *
+ 134 |  * This class applies a constant scaling factor to another kernel, which can be
+ 135 |  * used to adjust the overall magnitude of the kernel's influence.
+ 136 |  */
+ 137 | class ScaledKernel : public KernelBase
+ 138 | {
+ 139 |   private:
+ 140 |     double scale;
+ 141 |     std::unique_ptr<KernelBase> base_kernel;
+ 142 | 
+ 143 |   public:
+ 144 |     /**
+ 145 |      * Create a scaled kernel.
+ 146 |      *
+ 147 |      * @param scale Scaling factor
+ 148 |      * @param base_kernel Base kernel to be scaled
+ 149 |      * @throws std::invalid_argument if scale is not positive
+ 150 |      */
+ 151 |     ScaledKernel(double scale, std::unique_ptr<KernelBase> base_kernel);
+ 152 | 
+ 153 |     void evaluateSubmatrix(const Eigen::MatrixXd &X1, const Eigen::MatrixXd &X2, Eigen::MatrixXd &K) const override;
+ 154 | 
+ 155 |     void multiplyInPlace(const Eigen::MatrixXd &X, const Eigen::VectorXd &v, Eigen::VectorXd &result) const override;
+ 156 | 
+ 157 |     double evaluateScalar(const Eigen::VectorXd &x1, const Eigen::VectorXd &x2) const override;
+ 158 | 
+ 159 |     std::unique_ptr<KernelBase> clone() const override;
+ 160 | 
+ 161 |     std::string toString() const override;
+ 162 | 
+ 163 |     // Getters
+ 164 |     double getScale() const
+ 165 |     {
+ 166 |         return scale;
+ 167 |     }
+ 168 |     const KernelBase &getBaseKernel() const
+ 169 |     {
+ 170 |         return *base_kernel;
+ 171 |     }
+ 172 | };
+ 173 | 
+ 174 | } // namespace flexKernel
+ 175 | 
+ 176 | #endif // COMPOSITE_KERNELS_H
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/kernel_exports.cpp`:
+
+```cpp
+   1 | #include "kernel_factory.h"
+   2 | #include "nystrom.h"
+   3 | #include <RcppEigen.h>
+   4 | 
+   5 | // [[Rcpp::depends(RcppEigen)]]
+   6 | 
+   7 | //' Compute the kernel matrix between two sets of data points.
+   8 | //'
+   9 | //' @param X1 First set of data points (each row is a data point)
+  10 | //' @param X2 Second set of data points (each row is a data point)
+  11 | //' @param kernel_spec R list describing the kernel
+  12 | //' @return Kernel matrix K
+  13 | // [[Rcpp::export]]
+  14 | Eigen::MatrixXd kernelMatrix_cpp(const Eigen::MatrixXd &X1, const Eigen::MatrixXd &X2, const Rcpp::List &kernel_spec)
+  15 | {
+  16 |     try
+  17 |     {
+  18 |         // Create kernel object from specification
+  19 |         std::unique_ptr<flexKernel::KernelBase> kernel = flexKernel::createKernel(kernel_spec);
+  20 |         
+  21 |         // Compute kernel matrix
+  22 |         Eigen::MatrixXd K(X1.rows(), X2.rows());
+  23 |         kernel->evaluateSubmatrix(X1, X2, K);
+  24 |         return K;
+  25 |     }
+  26 |     catch (const std::exception &e)
+  27 |     {
+  28 |         Rcpp::stop("Error computing kernel matrix: %s", e.what());
+  29 |     }
+  30 | }
+  31 | 
+  32 | //' Compute the Nystrom approximation of a kernel matrix.
+  33 | //'
+  34 | //' @param X Data matrix (each row is a data point)
+  35 | //' @param num_landmarks Number of landmark points to use
+  36 | //' @param kernel_spec R list describing the kernel
+  37 | //' @param regularization Regularization parameter for inverting K_mm
+  38 | //' @param batch_size Size of mini-batches for k-means
+  39 | //' @param max_iterations Maximum number of iterations for k-means
+  40 | //' @param seed Random seed for initialization
+  41 | //' @return List containing the Nystrom approximation components
+  42 | // [[Rcpp::export]]
+  43 | Rcpp::List computeNystromApproximation_cpp(const Eigen::MatrixXd &X, int num_landmarks, const Rcpp::List &kernel_spec,
+  44 |                                           double regularization = 1e-6, int batch_size = 100, int max_iterations = 100,
+  45 |                                           unsigned int seed = 42)
+  46 | {
+  47 |     try
+  48 |     {
+  49 |         // Validate inputs
+  50 |         if (num_landmarks <= 0)
+  51 |         {
+  52 |             Rcpp::stop("Number of landmarks must be positive");
+  53 |         }
+  54 |         if (regularization < 0)
+  55 |         {
+  56 |             Rcpp::stop("Regularization parameter must be non-negative");
+  57 |         }
+  58 |         if (batch_size <= 0)
+  59 |         {
+  60 |             Rcpp::stop("Batch size must be positive");
+  61 |         }
+  62 |         if (max_iterations <= 0)
+  63 |         {
+  64 |             Rcpp::stop("Maximum iterations must be positive");
+  65 |         }
+  66 |         
+  67 |         // Create kernel object from specification
+  68 |         std::unique_ptr<flexKernel::KernelBase> kernel = flexKernel::createKernel(kernel_spec);
+  69 |         
+  70 |         // Compute landmarks using mini-batch k-means
+  71 |         Eigen::MatrixXd landmarks = flexKernel::computeNystromLandmarks(X, num_landmarks, batch_size, max_iterations, seed);
+  72 |         
+  73 |         // Compute Nystrom approximation
+  74 |         flexKernel::NystromApproximation approx = flexKernel::computeNystromApproximation(X, landmarks, *kernel, regularization);
+  75 |         
+  76 |         // Return results as a list
+  77 |         return Rcpp::List::create(
+  78 |             Rcpp::Named("landmarks") = approx.landmarks,
+  79 |             Rcpp::Named("K_nm") = approx.K_nm,
+  80 |             Rcpp::Named("K_mm_inv") = approx.K_mm_inv
+  81 |         );
+  82 |     }
+  83 |     catch (const std::exception &e)
+  84 |     {
+  85 |         Rcpp::stop("Error computing Nystrom approximation: %s", e.what());
+  86 |     }
+  87 | }
+  88 | 
+  89 | //' Evaluate the kernel function for a single pair of data points.
+  90 | //'
+  91 | //' @param x1 First data point (vector)
+  92 | //' @param x2 Second data point (vector)
+  93 | //' @param kernel_spec R list describing the kernel
+  94 | //' @return Kernel value k(x1, x2)
+  95 | // [[Rcpp::export]]
+  96 | double kernelScalar_cpp(const Eigen::VectorXd &x1, const Eigen::VectorXd &x2, const Rcpp::List &kernel_spec)
+  97 | {
+  98 |     try
+  99 |     {
+ 100 |         // Create kernel object from specification
+ 101 |         std::unique_ptr<flexKernel::KernelBase> kernel = flexKernel::createKernel(kernel_spec);
+ 102 |         
+ 103 |         // Compute kernel value
+ 104 |         return kernel->evaluateScalar(x1, x2);
+ 105 |     }
+ 106 |     catch (const std::exception &e)
+ 107 |     {
+ 108 |         Rcpp::stop("Error computing kernel value: %s", e.what());
+ 109 |     }
+ 110 | }
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/mini_batch_kmeans.h`:
+
+```h
+   1 | #ifndef MINI_BATCH_KMEANS_H_
+   2 | #define MINI_BATCH_KMEANS_H_
+   3 | 
+   4 | #include <RcppEigen.h>
+   5 | #include <omp.h>
+   6 | #include <algorithm> // For std::min
+   7 | #include <vector>    // For std::vector
+   8 | #include <numeric>   // For std::iota
+   9 | #include <limits>    // For std::numeric_limits
+  10 | 
+  11 | /**
+  12 |  * mini_batch_kmeans_eigen
+  13 |  *
+  14 |  * @param means         (k x n_dims) matrix of cluster centers, updated in-place.
+  15 |  * @param X             (n_rows x n_dims) data matrix, where each row is an observation.
+  16 |  * @param k             number of clusters.
+  17 |  * @param batch_size    mini-batch size.
+  18 |  * @param max_epochs    number of full passes (epochs) over the dataset.
+  19 |  * @param num_threads   number of OpenMP threads to use.
+  20 |  * @param cluster       (n_rows) vector of cluster assignments (0-based indices), updated in-place.
+  21 |  *
+  22 |  * @return              true on success; false if data is invalid (e.g., too few points).
+  23 |  *
+  24 |  * Reproducibility Note:
+  25 |  * All random draws (both initialization and mini-batch sampling) come from R's RNG,
+  26 |  * ensuring that calls to set.seed() in R will fully determine the result.
+  27 |  */
+  28 | bool mini_batch_kmeans_eigen(
+  29 |     Eigen::MatrixXd& means,
+  30 |     const Eigen::MatrixXd& X,
+  31 |     const Eigen::Index k,
+  32 |     const Eigen::Index batch_size,
+  33 |     const Eigen::Index max_epochs,
+  34 |     const int num_threads,
+  35 |     Eigen::VectorXi& cluster
+  36 | );
+  37 | 
+  38 | //' @title Mini-Batch K-Means Clustering
+  39 | //'
+  40 | //' @description
+  41 | //' Performs mini-batch k-means clustering on a given dataset using the k-means++ initialization method.
+  42 | //' This function is a wrapper around a C++ implementation using RcppEigen for efficiency.
+  43 | //'
+  44 | //' @param XR The data matrix with observations in rows (standard R format).
+  45 | //' @param k The number of clusters.
+  46 | //' @param batch_size The size of each mini-batch.
+  47 | //' @param max_epochs The number of full passes over the dataset.
+  48 | //' @param num_threads The number of OpenMP threads to use for parallel processing.
+  49 | //'
+  50 | //' @return A list with the matrix of cluster centers, a vector of cluster assignments (1-based indices), and a status flag.
+  51 | //'
+  52 | //' @details
+  53 | //' This function implements the mini-batch k-means algorithm, which is an approximation of the standard k-means
+  54 | //' algorithm designed for large datasets. It processes the data in small random subsets (mini-batches) to update
+  55 | //' the cluster centers incrementally, reducing computational cost and memory usage.
+  56 | //'
+  57 | //' The cluster centers are initialized using the k-means++ method, which selects initial centers that are spread out
+  58 | //' across the dataset to improve convergence.
+  59 | //'
+  60 | //' The function uses OpenMP for parallel processing within each mini-batch, leveraging multiple CPU cores to speed up
+  61 | //' computations.
+  62 | //'
+  63 | //' Random selections, including initialization and mini-batch sampling, are performed using R's random number generator
+  64 | //' to ensure reproducibility with \code{set.seed()}.
+  65 | //'
+  66 | //' If any cluster does not receive points during an epoch, it is reinitialized to a random data point to prevent stagnation.
+  67 | //'
+  68 | //' @note The input matrix \code{XR} should have observations in rows and features in columns (standard R format).
+  69 | //' The returned cluster centers have k rows (one per cluster) and the same number of columns as the input data.
+  70 | //'
+  71 | //' @examples
+  72 | //' \dontrun{
+  73 | //' set.seed(123)
+  74 | //' X <- matrix(rnorm(1000 * 10), nrow = 1000)  # 1000 observations, 10 features
+  75 | //' result <- mini_batch_kmeans_rcpp(X, k = 3, batch_size = 100, max_epochs = 10, num_threads = 2)
+  76 | //' if (result$success) {
+  77 | //' print(result$means)  # 3 rows (clusters) × 10 columns (features)
+  78 | //' print(table(result$cluster))  # Distribution of observations across clusters
+  79 | //' } else {
+  80 | //' warning("Mini-batch k-means failed.")
+  81 | //' }
+  82 | //' }
+  83 | //'
+  84 | //' @export
+  85 | // [[Rcpp::export]]
+  86 | Rcpp::List mini_batch_kmeans_rcpp(
+  87 |     const Rcpp::NumericMatrix& XR,
+  88 |     const int k,
+  89 |     const int batch_size,
+  90 |     const int max_epochs,
+  91 |     const int num_threads = 1
+  92 | );
+  93 | 
+  94 | #endif // MINI_BATCH_KMEANS_H_
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/kernel_base.h`:
+
+```h
+   1 | #ifndef KERNEL_BASE_H
+   2 | #define KERNEL_BASE_H
+   3 | 
+   4 | #include <RcppEigen.h>
+   5 | #include <memory>
+   6 | #include <string>
+   7 | 
+   8 | namespace flexKernel {
+   9 | 
+  10 | /**
+  11 |  * Abstract base class for kernels.
+  12 |  *
+  13 |  * This class defines the interface for all kernel implementations.
+  14 |  * Concrete kernel classes must implement the evaluateSubmatrix,
+  15 |  * multiplyInPlace, evaluateScalar, clone, and toString methods.
+  16 |  */
+  17 | class KernelBase {
+  18 | public:
+  19 |   virtual ~KernelBase() = default;
+  20 | 
+  21 |   /**
+  22 |    * Compute the kernel matrix for two sets of data points.
+  23 |    *
+  24 |    * @param X1 First set of data points (each row is a data point)
+  25 |    * @param X2 Second set of data points (each row is a data point)
+  26 |    * @param K Output kernel matrix (will be overwritten)
+  27 |    * @throws std::invalid_argument if dimensions are incompatible
+  28 |    */
+  29 |   virtual void evaluateSubmatrix(
+  30 |       const Eigen::MatrixXd& X1,
+  31 |       const Eigen::MatrixXd& X2,
+  32 |       Eigen::MatrixXd& K) const = 0;
+  33 | 
+  34 |   /**
+  35 |    * Perform matrix-vector multiplication K*v where K is the kernel matrix.
+  36 |    * This avoids explicitly forming the full kernel matrix.
+  37 |    *
+  38 |    * @param X Data matrix (each row is a data point)
+  39 |    * @param v Vector to multiply with
+  40 |    * @param result Output vector (will be overwritten)
+  41 |    * @throws std::invalid_argument if dimensions are incompatible
+  42 |    */
+  43 |   virtual void multiplyInPlace(
+  44 |       const Eigen::MatrixXd& X,
+  45 |       const Eigen::VectorXd& v,
+  46 |       Eigen::VectorXd& result) const = 0;
+  47 | 
+  48 |   /**
+  49 |    * Evaluate the kernel function for a single pair of data points.
+  50 |    *
+  51 |    * @param x1 First data point (row vector)
+  52 |    * @param x2 Second data point (row vector)
+  53 |    * @return Kernel evaluation k(x1, x2)
+  54 |    * @throws std::invalid_argument if vectors have different dimensions
+  55 |    */
+  56 |   virtual double evaluateScalar(
+  57 |       const Eigen::VectorXd& x1,
+  58 |       const Eigen::VectorXd& x2) const = 0;
+  59 | 
+  60 |   /**
+  61 |    * Create a clone of this kernel object.
+  62 |    *
+  63 |    * @return A unique_ptr to a new instance of the same kernel with
+  64 |    *         identical parameters
+  65 |    */
+  66 |   virtual std::unique_ptr<KernelBase> clone() const = 0;
+  67 | 
+  68 |   /**
+  69 |    * Get a string representation of the kernel.
+  70 |    *
+  71 |    * @return A human-readable string describing the kernel and its parameters
+  72 |    */
+  73 |   virtual std::string toString() const = 0;
+  74 | };
+  75 | 
+  76 | } // namespace flexKernel
+  77 | 
+  78 | #endif // KERNEL_BASE_H
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/Makevars.win`:
+
+```win
+   1 | CXX_STD = CXX14
+   2 | PKG_CXXFLAGS += -Wno-ignored-attributes -O3 -march=native -flto
+   3 | PKG_LDFLAGS += -flto
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/kernel_factory.h`:
+
+```h
+   1 | #ifndef KERNEL_FACTORY_H
+   2 | #define KERNEL_FACTORY_H
+   3 | 
+   4 | #include "kernel_base.h"
+   5 | #include <RcppEigen.h>
+   6 | #include <memory>
+   7 | 
+   8 | namespace flexKernel
+   9 | {
+  10 | 
+  11 | /**
+  12 |  * Create a kernel object from an R list specification.
+  13 |  *
+  14 |  * This function takes an R list that describes a kernel configuration and
+  15 |  * returns a C++ kernel object that implements the specified kernel.
+  16 |  *
+  17 |  * The list should have a "type" element that specifies the kernel type,
+  18 |  * along with type-specific parameters:
+  19 |  *
+  20 |  * - Gaussian kernel: list(type = "gaussian", bandwidth = <value>)
+  21 |  * - Sinc kernel: list(type = "sinc", bandwidth = <value>)
+  22 |  * - Sum kernel: list(type = "sum", kernels = <list of kernel specs>)
+  23 |  * - Product kernel: list(type = "product", kernels = <list of kernel specs>)
+  24 |  * - Scaled kernel: list(type = "scaled", scale = <value>, kernel = <kernel spec>)
+  25 |  *
+  26 |  * @param kernel_spec R list describing the kernel configuration
+  27 |  * @return A unique_ptr to the created kernel object
+  28 |  * @throws std::invalid_argument if the specification is invalid or incomplete
+  29 |  */
+  30 | std::unique_ptr<KernelBase> createKernel(const Rcpp::List &kernel_spec);
+  31 | 
+  32 | } // namespace flexKernel
+  33 | 
+  34 | #endif // KERNEL_FACTORY_H
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/kernels.h`:
+
+```h
+   1 | #ifndef KERNELS_H
+   2 | #define KERNELS_H
+   3 | 
+   4 | #include "kernel_base.h"
+   5 | #include <cmath>
+   6 | #include <memory>
+   7 | #include <string>
+   8 | 
+   9 | namespace flexKernel
+  10 | {
+  11 | 
+  12 | /**
+  13 |  * Gaussian (RBF) kernel: k(x, y) = exp(-||x - y||^2 / (2 * bandwidth^2))
+  14 |  *
+  15 |  * This kernel is infinitely differentiable, making it suitable for modeling
+  16 |  * smooth functions. The bandwidth parameter controls the width of the kernel,
+  17 |  * with smaller values leading to more localized effects.
+  18 |  */
+  19 | class GaussianKernel : public KernelBase
+  20 | {
+  21 |   private:
+  22 |     double bandwidth; // Kernel bandwidth parameter (sigma)
+  23 | 
+  24 |   public:
+  25 |     /**
+  26 |      * Create a Gaussian kernel with the specified bandwidth.
+  27 |      *
+  28 |      * @param bandwidth Kernel bandwidth parameter (sigma)
+  29 |      * @throws std::invalid_argument if bandwidth is not positive
+  30 |      */
+  31 |     explicit GaussianKernel(double bandwidth);
+  32 | 
+  33 |     void evaluateSubmatrix(const Eigen::MatrixXd &X1, const Eigen::MatrixXd &X2, Eigen::MatrixXd &K) const override;
+  34 | 
+  35 |     void multiplyInPlace(const Eigen::MatrixXd &X, const Eigen::VectorXd &v, Eigen::VectorXd &result) const override;
+  36 | 
+  37 |     double evaluateScalar(const Eigen::VectorXd &x1, const Eigen::VectorXd &x2) const override;
+  38 | 
+  39 |     std::unique_ptr<KernelBase> clone() const override;
+  40 | 
+  41 |     std::string toString() const override;
+  42 | 
+  43 |     // Getter for bandwidth
+  44 |     double getBandwidth() const
+  45 |     {
+  46 |         return bandwidth;
+  47 |     }
+  48 | };
+  49 | 
+  50 | /**
+  51 |  * Sinc kernel: k(x, y) = prod_i sinc((x_i - y_i) / bandwidth)
+  52 |  * where sinc(z) = sin(pi * z) / (pi * z)
+  53 |  *
+  54 |  * This kernel corresponds to a box filter in the frequency domain
+  55 |  * and is often used in signal processing applications.
+  56 |  */
+  57 | class SincKernel : public KernelBase
+  58 | {
+  59 |   private:
+  60 |     double bandwidth; // Kernel bandwidth parameter
+  61 | 
+  62 |   public:
+  63 |     /**
+  64 |      * Create a Sinc kernel with the specified bandwidth.
+  65 |      *
+  66 |      * @param bandwidth Kernel bandwidth parameter
+  67 |      * @throws std::invalid_argument if bandwidth is not positive
+  68 |      */
+  69 |     explicit SincKernel(double bandwidth);
+  70 | 
+  71 |     void evaluateSubmatrix(const Eigen::MatrixXd &X1, const Eigen::MatrixXd &X2, Eigen::MatrixXd &K) const override;
+  72 | 
+  73 |     void multiplyInPlace(const Eigen::MatrixXd &X, const Eigen::VectorXd &v, Eigen::VectorXd &result) const override;
+  74 | 
+  75 |     double evaluateScalar(const Eigen::VectorXd &x1, const Eigen::VectorXd &x2) const override;
+  76 | 
+  77 |     std::unique_ptr<KernelBase> clone() const override;
+  78 | 
+  79 |     std::string toString() const override;
+  80 | 
+  81 |     // Getter for bandwidth
+  82 |     double getBandwidth() const
+  83 |     {
+  84 |         return bandwidth;
+  85 |     }
+  86 | };
+  87 | 
+  88 | /**
+  89 |  * Helper function for sinc calculation
+  90 |  * Computes sin(pi*x)/(pi*x) with appropriate handling for x=0
+  91 |  *
+  92 |  * @param x Input value
+  93 |  * @return sinc(x)
+  94 |  */
+  95 | inline double sinc(double x)
+  96 | {
+  97 |     if (std::abs(x) < 1e-10)
+  98 |     {
+  99 |         return 1.0; // limit of sin(pi*x)/(pi*x) as x approaches 0
+ 100 |     }
+ 101 |     else
+ 102 |     {
+ 103 |         const double pi_x = M_PI * x;
+ 104 |         return std::sin(pi_x) / pi_x;
+ 105 |     }
+ 106 | }
+ 107 | 
+ 108 | } // namespace flexKernel
+ 109 | 
+ 110 | #endif // KERNELS_H
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/src/nystrom.cpp`:
+
+```cpp
+   1 | /**
+   2 |  * @file nystrom.cpp
+   3 |  * @brief Implementation of Nystrom approximation functions
+   4 |  *
+   5 |  * This file implements the functions for Nystrom approximation of large
+   6 |  * kernel matrices, allowing for efficient kernel operations with large datasets.
+   7 |  */
+   8 | 
+   9 | #include "nystrom.h"
+  10 | #include <stdexcept>
+  11 | 
+  12 | namespace flexKernel
+  13 | {
+  14 | 
+  15 | Eigen::MatrixXd computeNystromLandmarks(const Eigen::MatrixXd &X, size_t num_landmarks, size_t batch_size, size_t num_iterations,
+  16 |                                         unsigned int seed)
+  17 | {
+  18 | 
+  19 |     // Validate inputs
+  20 |     if (X.rows() == 0 || X.cols() == 0)
+  21 |     {
+  22 |         throw std::invalid_argument("Input data matrix X cannot be empty");
+  23 |     }
+  24 | 
+  25 |     if (num_landmarks == 0)
+  26 |     {
+  27 |         throw std::invalid_argument("Number of landmarks must be positive");
+  28 |     }
+  29 | 
+  30 |     if (num_landmarks > X.rows())
+  31 |     {
+  32 |         Rcpp::warning("Number of landmarks exceeds number of data points, using all data points as landmarks");
+  33 |         return X;
+  34 |     }
+  35 | 
+  36 |     if (batch_size == 0)
+  37 |     {
+  38 |         throw std::invalid_argument("Batch size must be positive");
+  39 |     }
+  40 | 
+  41 |     if (batch_size > X.rows())
+  42 |     {
+  43 |         batch_size = X.rows();
+  44 |     }
+  45 | 
+  46 |     // Set random seed
+  47 |     Rcpp::Environment base_env("package:base");
+  48 |     Rcpp::Function set_seed = base_env["set.seed"];
+  49 |     set_seed(seed);
+  50 | 
+  51 |     // Initialize means matrix for cluster centers
+  52 |     Eigen::MatrixXd means(num_landmarks, X.cols());
+  53 | 
+  54 |     // Initialize cluster assignments
+  55 |     Eigen::VectorXi cluster;
+  56 | 
+  57 |     // Run mini-batch k-means
+  58 |     bool success =
+  59 |       mini_batch_kmeans_eigen(means, X, static_cast<Eigen::Index>(num_landmarks), static_cast<Eigen::Index>(batch_size),
+  60 |                               static_cast<Eigen::Index>(num_iterations),
+  61 |                               1, // num_threads
+  62 |                               cluster);
+  63 | 
+  64 |     if (!success)
+  65 |     {
+  66 |         throw std::runtime_error("Mini-batch k-means clustering failed");
+  67 |     }
+  68 | 
+  69 |     return means;
+  70 | }
+  71 | 
+  72 | NystromApproximation computeNystromApproximation(const Eigen::MatrixXd &X, const Eigen::MatrixXd &landmarks,
+  73 |                                                  const KernelBase &kernel, double regularization)
+  74 | {
+  75 | 
+  76 |     // Validate inputs
+  77 |     if (X.rows() == 0 || X.cols() == 0)
+  78 |     {
+  79 |         throw std::invalid_argument("Input data matrix X cannot be empty");
+  80 |     }
+  81 | 
+  82 |     if (landmarks.rows() == 0 || landmarks.cols() == 0)
+  83 |     {
+  84 |         throw std::invalid_argument("Landmarks matrix cannot be empty");
+  85 |     }
+  86 | 
+  87 |     if (X.cols() != landmarks.cols())
+  88 |     {
+  89 |         throw std::invalid_argument("Data points and landmarks must have the same number of features");
+  90 |     }
+  91 | 
+  92 |     if (regularization < 0)
+  93 |     {
+  94 |         throw std::invalid_argument("Regularization parameter must be non-negative");
+  95 |     }
+  96 | 
+  97 |     // Create result structure
+  98 |     NystromApproximation approx;
+  99 |     approx.landmarks = landmarks;
+ 100 | 
+ 101 |     // Compute kernel matrix between data and landmarks: K_nm
+ 102 |     kernel.evaluateSubmatrix(X, landmarks, approx.K_nm);
+ 103 | 
+ 104 |     // Compute kernel matrix between landmarks: K_mm
+ 105 |     Eigen::MatrixXd K_mm;
+ 106 |     kernel.evaluateSubmatrix(landmarks, landmarks, K_mm);
+ 107 | 
+ 108 |     // Add regularization to diagonal for numerical stability
+ 109 |     for (size_t i = 0; i < K_mm.rows(); ++i)
+ 110 |     {
+ 111 |         K_mm(i, i) += regularization;
+ 112 |     }
+ 113 | 
+ 114 |     // Compute inverse of K_mm
+ 115 |     Eigen::FullPivLU<Eigen::MatrixXd> lu_decomp(K_mm);
+ 116 |     bool success = lu_decomp.isInvertible();
+ 117 | 
+ 118 |     // If inversion fails, use pseudo-inverse as fallback
+ 119 |     if (!success)
+ 120 |     {
+ 121 |       std::cerr << "Warning: Matrix inversion failed in Nystrom approximation, using pseudo-inverse" << std::endl;
+ 122 | 
+ 123 |       // Eigen equivalent of arma::pinv(K_mm) using Singular Value Decomposition (SVD)
+ 124 |       Eigen::JacobiSVD<Eigen::MatrixXd> svd(K_mm, Eigen::ComputeThinU | Eigen::ComputeThinV);
+ 125 |       Eigen::VectorXd singularValues = svd.singularValues();
+ 126 |       Eigen::MatrixXd singularValuesInv(singularValues.size(), singularValues.size());
+ 127 |       singularValuesInv.setZero();
+ 128 |       double epsilon = std::numeric_limits<double>::epsilon() * std::max(K_mm.rows(), K_mm.cols()) * singularValues.array().abs().maxCoeff();
+ 129 |       for (int i = 0; i < singularValues.size(); ++i) {
+ 130 |         if (singularValues(i) > epsilon) {
+ 131 |           singularValuesInv(i, i) = 1.0 / singularValues(i);
+ 132 |         }
+ 133 |       }
+ 134 |       approx.K_mm_inv = svd.matrixV() * singularValuesInv * svd.matrixU().transpose();
+ 135 |     } else {
+ 136 |       approx.K_mm_inv = lu_decomp.inverse();
+ 137 |     }
+ 138 | 
+ 139 |     return approx;
+ 140 | }
+ 141 | 
+ 142 | } // namespace flexKernel
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/NAMESPACE`:
+
+```
+   1 | # Generated by roxygen2: do not edit by hand
+   2 | 
+   3 | S3method(Ops,kernel_spec)
+   4 | S3method(print,kernel_spec)
+   5 | export(gaussian_kernel)
+   6 | export(generate_kernel_grid)
+   7 | export(kernel_distance)
+   8 | export(kernel_matrix)
+   9 | export(mini_batch_kmeans_rcpp)
+  10 | export(product_kernels)
+  11 | export(scale_kernel)
+  12 | export(sinc_kernel)
+  13 | export(sum_kernels)
+  14 | importFrom(Rcpp,sourceCpp)
+  15 | useDynLib(flexKernel, .registration = TRUE)
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/R/flexKernel-package.R`:
+
+```R
+   1 | ## usethis namespace: start
+   2 | #' @useDynLib flexKernel, .registration = TRUE
+   3 | #' @importFrom Rcpp sourceCpp
+   4 | ## usethis namespace: end
+   5 | NULL
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/R/kernels.R`:
+
+```R
+   1 | #' @title Kernel Specification Functions for KGF Regression
+   2 | #' @description Functions for creating and manipulating kernel specifications.
+   3 | #' This includes both basic kernel types and functions for combining kernels
+   4 | #' through addition, multiplication, and scaling.
+   5 | 
+   6 | #' Create a Gaussian kernel specification
+   7 | #'
+   8 | #' The Gaussian (RBF) kernel is defined as:
+   9 | #' \deqn{k(x, y) = \exp(-\|x - y\|^2 / (2 \sigma^2))}
+  10 | #' where \eqn{\sigma} is the bandwidth parameter.
+  11 | #'
+  12 | #' @param bandwidth Kernel bandwidth parameter (sigma)
+  13 | #' @return A list representing a Gaussian kernel specification
+  14 | #' @examples
+  15 | #' # Create a Gaussian kernel with bandwidth 1.0
+  16 | #' kernel <- gaussian_kernel(1.0)
+  17 | #' @export
+  18 | gaussian_kernel <- function(bandwidth) {
+  19 |   # Validate input
+  20 |   if (!is.numeric(bandwidth)) {
+  21 |     stop("Bandwidth must be numeric")
+  22 |   }
+  23 |   if (length(bandwidth) != 1) {
+  24 |     stop("Bandwidth must be a scalar")
+  25 |   }
+  26 |   if (bandwidth <= 0) {
+  27 |     stop("Bandwidth must be positive")
+  28 |   }
+  29 | 
+  30 |   # Create kernel specification
+  31 |   kernel <- list(type = "gaussian", bandwidth = bandwidth)
+  32 |   class(kernel) <- c("kernel_spec", "list")
+  33 |   return(kernel)
+  34 | }
+  35 | 
+  36 | #' Create a Sinc kernel specification
+  37 | #'
+  38 | #' The Sinc kernel is defined as:
+  39 | #' \deqn{k(x, y) = \prod_i \text{sinc}((x_i - y_i) / \text{bandwidth})}
+  40 | #' where \eqn{\text{sinc}(z) = \sin(\pi z) / (\pi z)}.
+  41 | #'
+  42 | #' @param bandwidth Kernel bandwidth parameter
+  43 | #' @return A list representing a Sinc kernel specification
+  44 | #' @examples
+  45 | #' # Create a Sinc kernel with bandwidth 1.0
+  46 | #' kernel <- sinc_kernel(1.0)
+  47 | #' @export
+  48 | sinc_kernel <- function(bandwidth) {
+  49 |   # Validate input
+  50 |   if (!is.numeric(bandwidth)) {
+  51 |     stop("Bandwidth must be numeric")
+  52 |   }
+  53 |   if (length(bandwidth) != 1) {
+  54 |     stop("Bandwidth must be a scalar")
+  55 |   }
+  56 |   if (bandwidth <= 0) {
+  57 |     stop("Bandwidth must be positive")
+  58 |   }
+  59 | 
+  60 |   # Create kernel specification
+  61 |   kernel <- list(type = "sinc", bandwidth = bandwidth)
+  62 |   class(kernel) <- c("kernel_spec", "list")
+  63 |   return(kernel)
+  64 | }
+  65 | 
+  66 | #' Create a sum of kernels specification
+  67 | #'
+  68 | #' The sum kernel combines multiple kernels through addition:
+  69 | #' \deqn{k(x, y) = k_1(x, y) + k_2(x, y) + \ldots + k_n(x, y)}
+  70 | #'
+  71 | #' @param ... Kernel specifications to be combined
+  72 | #' @return A list representing a sum kernel specification
+  73 | #' @examples
+  74 | #' # Create a sum of two Gaussian kernels with different bandwidths
+  75 | #' kernel <- sum_kernels(
+  76 | #'   gaussian_kernel(1.0),
+  77 | #'   gaussian_kernel(0.1)
+  78 | #' )
+  79 | #' # You can also use the + operator:
+  80 | #' # kernel <- gaussian_kernel(1.0) + gaussian_kernel(0.1)
+  81 | #' @export
+  82 | sum_kernels <- function(...) {
+  83 |   # Get kernels from arguments
+  84 |   kernels <- list(...)
+  85 | 
+  86 |   # Validate inputs
+  87 |   if (length(kernels) == 0) {
+  88 |     stop("At least one kernel must be provided")
+  89 |   }
+  90 | 
+  91 |   # Check that all arguments are valid kernel specifications
+  92 |   for (i in seq_along(kernels)) {
+  93 |     if (!inherits(kernels[[i]], "kernel_spec")) {
+  94 |       stop(paste("Argument", i, "is not a valid kernel specification"))
+  95 |     }
+  96 |   }
+  97 | 
+  98 |   # Simplify if there's only one kernel in the list
+  99 |   if (length(kernels) == 1) {
+ 100 |     return(kernels[[1]])
+ 101 |   }
+ 102 | 
+ 103 |   # Flatten nested sum kernels
+ 104 |   flat_kernels <- list()
+ 105 |   for (kernel in kernels) {
+ 106 |     if (kernel$type == "sum") {
+ 107 |       # Add each sub-kernel individually
+ 108 |       flat_kernels <- c(flat_kernels, kernel$kernels)
+ 109 |     } else {
+ 110 |       # Add non-sum kernel as is
+ 111 |       flat_kernels <- c(flat_kernels, list(kernel))
+ 112 |     }
+ 113 |   }
+ 114 | 
+ 115 |   # Create kernel specification
+ 116 |   kernel <- list(type = "sum", kernels = flat_kernels)
+ 117 |   class(kernel) <- c("kernel_spec", "list")
+ 118 |   return(kernel)
+ 119 | }
+ 120 | 
+ 121 | #' Create a product of kernels specification
+ 122 | #'
+ 123 | #' The product kernel combines multiple kernels through multiplication:
+ 124 | #' \deqn{k(x, y) = k_1(x, y) \times k_2(x, y) \times \ldots \times k_n(x, y)}
+ 125 | #'
+ 126 | #' @param ... Kernel specifications to be multiplied
+ 127 | #' @return A list representing a product kernel specification
+ 128 | #' @examples
+ 129 | #' # Create a product of a Gaussian kernel and a Sinc kernel
+ 130 | #' kernel <- product_kernels(
+ 131 | #'   gaussian_kernel(1.0),
+ 132 | #'   sinc_kernel(0.5)
+ 133 | #' )
+ 134 | #' # You can also use the * operator:
+ 135 | #' # kernel <- gaussian_kernel(1.0) * sinc_kernel(0.5)
+ 136 | #' @export
+ 137 | product_kernels <- function(...) {
+ 138 |   # Get kernels from arguments
+ 139 |   kernels <- list(...)
+ 140 | 
+ 141 |   # Validate inputs
+ 142 |   if (length(kernels) == 0) {
+ 143 |     stop("At least one kernel must be provided")
+ 144 |   }
+ 145 | 
+ 146 |   # Check that all arguments are valid kernel specifications
+ 147 |   for (i in seq_along(kernels)) {
+ 148 |     if (!inherits(kernels[[i]], "kernel_spec")) {
+ 149 |       stop(paste("Argument", i, "is not a valid kernel specification"))
+ 150 |     }
+ 151 |   }
+ 152 | 
+ 153 |   # Simplify if there's only one kernel in the list
+ 154 |   if (length(kernels) == 1) {
+ 155 |     return(kernels[[1]])
+ 156 |   }
+ 157 | 
+ 158 |   # Flatten nested product kernels
+ 159 |   flat_kernels <- list()
+ 160 |   for (kernel in kernels) {
+ 161 |     if (kernel$type == "product") {
+ 162 |       # Add each sub-kernel individually
+ 163 |       flat_kernels <- c(flat_kernels, kernel$kernels)
+ 164 |     } else {
+ 165 |       # Add non-product kernel as is
+ 166 |       flat_kernels <- c(flat_kernels, list(kernel))
+ 167 |     }
+ 168 |   }
+ 169 | 
+ 170 |   # Create kernel specification
+ 171 |   kernel <- list(type = "product", kernels = flat_kernels)
+ 172 |   class(kernel) <- c("kernel_spec", "list")
+ 173 |   return(kernel)
+ 174 | }
+ 175 | 
+ 176 | #' Scale a kernel specification
+ 177 | #'
+ 178 | #' The scaled kernel applies a constant scaling factor to another kernel:
+ 179 | #' \deqn{k(x, y) = \text{scale} \times k_{\text{base}}(x, y)}
+ 180 | #'
+ 181 | #' @param kernel Kernel specification to be scaled
+ 182 | #' @param scale Scaling factor
+ 183 | #' @return A list representing a scaled kernel specification
+ 184 | #' @examples
+ 185 | #' # Create a scaled Gaussian kernel
+ 186 | #' kernel <- scale_kernel(gaussian_kernel(1.0), 2.5)
+ 187 | #' # You can also use the * operator:
+ 188 | #' # kernel <- 2.5 * gaussian_kernel(1.0)
+ 189 | #' @export
+ 190 | scale_kernel <- function(kernel, scale) {
+ 191 |   # Validate inputs
+ 192 |   if (!inherits(kernel, "kernel_spec")) {
+ 193 |     stop("First argument must be a valid kernel specification")
+ 194 |   }
+ 195 | 
+ 196 |   if (!is.numeric(scale)) {
+ 197 |     stop("Scale must be numeric")
+ 198 |   }
+ 199 | 
+ 200 |   if (length(scale) != 1) {
+ 201 |     stop("Scale must be a scalar")
+ 202 |   }
+ 203 | 
+ 204 |   if (scale <= 0) {
+ 205 |     stop("Scale must be positive")
+ 206 |   }
+ 207 | 
+ 208 |   # Special case: if the kernel is already a scaled kernel,
+ 209 |   # just multiply the scales instead of nesting
+ 210 |   if (kernel$type == "scaled") {
+ 211 |     return(scale_kernel(kernel$kernel, scale * kernel$scale))
+ 212 |   }
+ 213 | 
+ 214 |   # Create kernel specification
+ 215 |   kernel <- list(type = "scaled", kernel = kernel, scale = scale)
+ 216 |   class(kernel) <- c("kernel_spec", "list")
+ 217 |   return(kernel)
+ 218 | }
+ 219 | 
+ 220 | #' Print a kernel specification
+ 221 | #'
+ 222 | #' Internal function to recursively print kernel specifications.
+ 223 | #'
+ 224 | #' @param kernel Kernel specification
+ 225 | #' @param indent Indentation level (for nested printing)
+ 226 | #' @return Invisible NULL
+ 227 | #' @keywords internal
+ 228 | print_kernel <- function(kernel, indent = 0) {
+ 229 |   # Create indentation string
+ 230 |   ind <- paste(rep("  ", indent), collapse = "")
+ 231 | 
+ 232 |   # Print kernel information based on type
+ 233 |   if (kernel$type == "gaussian") {
+ 234 |     cat(ind, "Gaussian kernel (bandwidth = ", kernel$bandwidth, ")\n", sep = "")
+ 235 |   } else if (kernel$type == "sinc") {
+ 236 |     cat(ind, "Sinc kernel (bandwidth = ", kernel$bandwidth, ")\n", sep = "")
+ 237 |   } else if (kernel$type == "scaled") {
+ 238 |     cat(ind, "Scaled kernel (scale = ", kernel$scale, ")\n", sep = "")
+ 239 |     print_kernel(kernel$kernel, indent + 1)
+ 240 |   } else if (kernel$type == "sum") {
+ 241 |     cat(ind, "Sum of kernels:\n", sep = "")
+ 242 |     for (k in kernel$kernels) {
+ 243 |       print_kernel(k, indent + 1)
+ 244 |     }
+ 245 |   } else if (kernel$type == "product") {
+ 246 |     cat(ind, "Product of kernels:\n", sep = "")
+ 247 |     for (k in kernel$kernels) {
+ 248 |       print_kernel(k, indent + 1)
+ 249 |     }
+ 250 |   } else {
+ 251 |     cat(ind, "Unknown kernel type: ", kernel$type, "\n", sep = "")
+ 252 |   }
+ 253 | 
+ 254 |   invisible(NULL)
+ 255 | }
+ 256 | 
+ 257 | #' Print method for kernel specifications
+ 258 | #'
+ 259 | #' @param x Kernel specification
+ 260 | #' @param ... Additional arguments (not used)
+ 261 | #' @return Invisible NULL
+ 262 | #' @export
+ 263 | print.kernel_spec <- function(x, ...) {
+ 264 |   cat("Kernel Specification:\n")
+ 265 |   print_kernel(x)
+ 266 |   invisible(x)
+ 267 | }
+ 268 | 
+ 269 | #' Overloaded operators for kernel specifications
+ 270 | #'
+ 271 | #' This function allows the use of arithmetic operators with kernel specifications,
+ 272 | #' providing an intuitive way to construct complex kernels.
+ 273 | #'
+ 274 | #' Supported operations:
+ 275 | #' - `kernel + kernel`: Creates a sum of kernels
+ 276 | #' - `kernel * kernel`: Creates a product of kernels
+ 277 | #' - `number * kernel` or `kernel * number`: Creates a scaled kernel
+ 278 | #'
+ 279 | #' @param e1 First operand
+ 280 | #' @param e2 Second operand (may be missing for unary operators)
+ 281 | #' @return A new kernel specification
+ 282 | #' @examples
+ 283 | #' # Create some basic kernels
+ 284 | #' g <- gaussian_kernel(1.0)
+ 285 | #' s <- sinc_kernel(0.5)
+ 286 | #'
+ 287 | #' # Create complex kernels using operators
+ 288 | #' sum_kernel <- g + s          # Sum of kernels
+ 289 | #' product_kernel <- g * s      # Product of kernels
+ 290 | #' scaled_kernel <- 2.5 * g     # Scaled kernel
+ 291 | #'
+ 292 | #' # Create a more complex kernel
+ 293 | #' complex_kernel <- 0.5 * g + 2.0 * (s * g)
+ 294 | #' @export
+ 295 | Ops.kernel_spec <- function(e1, e2) {
+ 296 |   op <- .Generic
+ 297 | 
+ 298 |   # Handle unary operators (not likely needed for kernels)
+ 299 |   if (missing(e2)) {
+ 300 |     switch(op,
+ 301 |            "+" = return(e1),
+ 302 |            "-" = stop("Unary negation not supported for kernels"),
+ 303 |            stop(paste("Unary operator", op, "not supported for kernels"))
+ 304 |     )
+ 305 |   }
+ 306 | 
+ 307 |   # Handle binary operators
+ 308 |   # Both arguments are kernels
+ 309 |   if (inherits(e1, "kernel_spec") && inherits(e2, "kernel_spec")) {
+ 310 |     switch(op,
+ 311 |            "+" = return(sum_kernels(e1, e2)),
+ 312 |            "*" = return(product_kernels(e1, e2)),
+ 313 |            stop(paste("Binary operator", op, "not supported for kernel-kernel operations"))
+ 314 |     )
+ 315 |   }
+ 316 | 
+ 317 |   # One argument is a kernel, one is a number
+ 318 |   if (inherits(e1, "kernel_spec") && is.numeric(e2)) {
+ 319 |     switch(op,
+ 320 |            "*" = return(scale_kernel(e1, e2)),
+ 321 |            stop(paste("Binary operator", op, "not supported for kernel-numeric operations"))
+ 322 |     )
+ 323 |   }
+ 324 | 
+ 325 |   if (is.numeric(e1) && inherits(e2, "kernel_spec")) {
+ 326 |     switch(op,
+ 327 |            "*" = return(scale_kernel(e2, e1)),
+ 328 |            stop(paste("Binary operator", op, "not supported for numeric-kernel operations"))
+ 329 |     )
+ 330 |   }
+ 331 | 
+ 332 |   # If we get here, the operation is not supported
+ 333 |   stop(paste("Operation", op, "not supported for these argument types"))
+ 334 | }
+ 335 | 
+ 336 | #' Create a kernel matrix from data points
+ 337 | #'
+ 338 | #' This function computes the kernel matrix for a given set of data points
+ 339 | #' using a specified kernel.
+ 340 | #'
+ 341 | #' @param X1 First set of data points (each row is a data point)
+ 342 | #' @param X2 Second set of data points (optional, defaults to X1)
+ 343 | #' @param kernel Kernel specification
+ 344 | #' @return Kernel matrix K
+ 345 | #' @examples
+ 346 | #' # Generate some data
+ 347 | #' X <- matrix(rnorm(20), 10, 2)
+ 348 | #'
+ 349 | #' # Create a Gaussian kernel
+ 350 | #' kernel <- gaussian_kernel(1.0)
+ 351 | #'
+ 352 | #' # Compute the kernel matrix
+ 353 | #' K <- kernel_matrix(X, kernel = kernel)
+ 354 | #' @export
+ 355 | kernel_matrix <- function(X1, X2 = NULL, kernel) {
+ 356 |   # Validate inputs
+ 357 |   if (!is.matrix(X1)) {
+ 358 |     X1 <- as.matrix(X1)
+ 359 |   }
+ 360 | 
+ 361 |   if (is.null(X2)) {
+ 362 |     X2 <- X1
+ 363 |   } else if (!is.matrix(X2)) {
+ 364 |     X2 <- as.matrix(X2)
+ 365 |   }
+ 366 | 
+ 367 |   if (ncol(X1) != ncol(X2)) {
+ 368 |     stop("X1 and X2 must have the same number of columns")
+ 369 |   }
+ 370 | 
+ 371 |   if (!inherits(kernel, "kernel_spec")) {
+ 372 |     stop("kernel must be a valid kernel specification")
+ 373 |   }
+ 374 | 
+ 375 |   # Compute kernel matrix using C++ function
+ 376 |   K <- kernelMatrix_cpp(X1, X2, kernel)
+ 377 | 
+ 378 |   return(K)
+ 379 | }
+ 380 | 
+ 381 | #' Generate kernel specifications for cross-validation
+ 382 | #'
+ 383 | #' This function creates a grid of kernel specifications for use in
+ 384 | #' cross-validation or grid search. It can generate multiple bandwidth
+ 385 | #' values for Gaussian kernels, or combinations of different kernel types.
+ 386 | #'
+ 387 | #' @param kernel_type Type of kernel to generate: "gaussian", "sinc", or "both"
+ 388 | #' @param bandwidths Vector of bandwidth values to try
+ 389 | #' @param scales Vector of scaling factors to try (optional)
+ 390 | #' @return List of kernel specifications
+ 391 | #' @examples
+ 392 | #' # Generate a grid of Gaussian kernels with different bandwidths
+ 393 | #' kernels <- generate_kernel_grid("gaussian", c(0.1, 1.0, 10.0))
+ 394 | #'
+ 395 | #' # Generate a grid with both Gaussian and Sinc kernels
+ 396 | #' kernels <- generate_kernel_grid("both", c(0.5, 2.0))
+ 397 | #'
+ 398 | #' # Generate a grid with scaled kernels
+ 399 | #' kernels <- generate_kernel_grid("gaussian", c(1.0, 5.0), scales = c(0.5, 2.0))
+ 400 | #' @export
+ 401 | generate_kernel_grid <- function(kernel_type = "gaussian", bandwidths = 10^(-1:1), scales = NULL) {
+ 402 |   # Validate inputs
+ 403 |   if (!is.character(kernel_type) || length(kernel_type) != 1) {
+ 404 |     stop("kernel_type must be a single character string")
+ 405 |   }
+ 406 | 
+ 407 |   if (!kernel_type %in% c("gaussian", "sinc", "both")) {
+ 408 |     stop("kernel_type must be one of 'gaussian', 'sinc', or 'both'")
+ 409 |   }
+ 410 | 
+ 411 |   if (!is.numeric(bandwidths) || length(bandwidths) == 0) {
+ 412 |     stop("bandwidths must be a non-empty numeric vector")
+ 413 |   }
+ 414 | 
+ 415 |   if (!is.null(scales) && (!is.numeric(scales) || length(scales) == 0)) {
+ 416 |     stop("scales must be NULL or a non-empty numeric vector")
+ 417 |   }
+ 418 | 
+ 419 |   # Generate basic kernels
+ 420 |   kernels <- list()
+ 421 | 
+ 422 |   if (kernel_type %in% c("gaussian", "both")) {
+ 423 |     # Add Gaussian kernels
+ 424 |     for (bw in bandwidths) {
+ 425 |       kernels <- c(kernels, list(gaussian_kernel(bw)))
+ 426 |     }
+ 427 |   }
+ 428 | 
+ 429 |   if (kernel_type %in% c("sinc", "both")) {
+ 430 |     # Add Sinc kernels
+ 431 |     for (bw in bandwidths) {
+ 432 |       kernels <- c(kernels, list(sinc_kernel(bw)))
+ 433 |     }
+ 434 |   }
+ 435 | 
+ 436 |   # Apply scaling if requested
+ 437 |   if (!is.null(scales)) {
+ 438 |     scaled_kernels <- list()
+ 439 |     for (kernel in kernels) {
+ 440 |       for (scale in scales) {
+ 441 |         scaled_kernels <- c(scaled_kernels, list(scale_kernel(kernel, scale)))
+ 442 |       }
+ 443 |     }
+ 444 |     kernels <- scaled_kernels
+ 445 |   }
+ 446 | 
+ 447 |   return(kernels)
+ 448 | }
+ 449 | 
+ 450 | #' Kernel distance between two sets of points
+ 451 | #'
+ 452 | #' This function computes the pairwise kernel distances between two sets
+ 453 | #' of points. The kernel distance is defined as:
+ 454 | #' \deqn{d_k(x, y) = \sqrt{k(x, x) + k(y, y) - 2k(x, y)}}
+ 455 | #'
+ 456 | #' @param X1 First set of data points (each row is a data point)
+ 457 | #' @param X2 Second set of data points (optional, defaults to X1)
+ 458 | #' @param kernel Kernel specification
+ 459 | #' @return Matrix of kernel distances
+ 460 | #' @examples
+ 461 | #' # Generate some data
+ 462 | #' X <- matrix(rnorm(20), 10, 2)
+ 463 | #'
+ 464 | #' # Create a Gaussian kernel
+ 465 | #' kernel <- gaussian_kernel(1.0)
+ 466 | #'
+ 467 | #' # Compute kernel distances
+ 468 | #' D <- kernel_distance(X, kernel = kernel)
+ 469 | #' @export
+ 470 | kernel_distance <- function(X1, X2 = NULL, kernel) {
+ 471 |   # Validate inputs
+ 472 |   if (!is.matrix(X1)) {
+ 473 |     X1 <- as.matrix(X1)
+ 474 |   }
+ 475 | 
+ 476 |   if (is.null(X2)) {
+ 477 |     X2 <- X1
+ 478 |     self_comparison <- TRUE
+ 479 |   } else {
+ 480 |     if (!is.matrix(X2)) {
+ 481 |       X2 <- as.matrix(X2)
+ 482 |     }
+ 483 |     self_comparison <- identical(X1, X2)
+ 484 |   }
+ 485 | 
+ 486 |   if (ncol(X1) != ncol(X2)) {
+ 487 |     stop("X1 and X2 must have the same number of columns")
+ 488 |   }
+ 489 | 
+ 490 |   if (!inherits(kernel, "kernel_spec")) {
+ 491 |     stop("kernel must be a valid kernel specification")
+ 492 |   }
+ 493 | 
+ 494 |   # Compute kernel matrices
+ 495 |   K12 <- kernel_matrix(X1, X2, kernel)
+ 496 | 
+ 497 |   if (self_comparison) {
+ 498 |     # If X1 == X2, we only need to compute one kernel matrix
+ 499 |     K11 <- diag(K12)
+ 500 |     K22 <- K11
+ 501 |   } else {
+ 502 |     # Compute diagonal elements of kernel matrices
+ 503 |     K11 <- diag(kernel_matrix(X1, X1, kernel))
+ 504 |     K22 <- diag(kernel_matrix(X2, X2, kernel))
+ 505 |   }
+ 506 | 
+ 507 |   # Compute kernel distances
+ 508 |   D <- matrix(0, nrow = nrow(X1), ncol = nrow(X2))
+ 509 |   for (i in 1:nrow(X1)) {
+ 510 |     for (j in 1:nrow(X2)) {
+ 511 |       D[i, j] <- sqrt(max(0, K11[i] + K22[j] - 2 * K12[i, j]))
+ 512 |     }
+ 513 |   }
+ 514 | 
+ 515 |   return(D)
+ 516 | }
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/R/nystrom.R`:
+
+```R
+   1 | #' Nystrom Approximation for Kernel Matrices
+   2 | #'
+   3 | #' This function computes the Nystrom approximation for large kernel matrices,
+   4 | #' which provides an efficient low-rank approximation using a subset of landmark points.
+   5 | #' The approximation is given by K ≈ K_nm * K_mm^(-1) * K_nm^T where K_nm is the
+   6 | #' kernel matrix between data points and landmarks, and K_mm is the kernel matrix
+   7 | #' between landmarks.
+   8 | #'
+   9 | #' @param X Data matrix where each row is a data point
+  10 | #' @param kernel Kernel specification created using `gaussian_kernel()`, `sinc_kernel()`,
+  11 | #'        or combinations of kernels
+  12 | #' @param num_landmarks Number of landmark points to use (default: min(300, nrow(X)/3))
+  13 | #' @param regularization Regularization parameter for numerical stability (default: 1e-6)
+  14 | #' @param batch_size Size of mini-batches for k-means clustering when selecting landmarks (default: 100)
+  15 | #' @param max_iterations Maximum number of iterations for k-means (default: 100)
+  16 | #' @param seed Random seed for reproducibility (default: 42)
+  17 | #' @return An object of class "nystrom_approx" with components:
+  18 | #'   \item{landmarks}{Matrix of landmark points}
+  19 | #'   \item{K_nm}{Kernel matrix between data points and landmarks}
+  20 | #'   \item{K_mm_inv}{Inverse of kernel matrix between landmarks}
+  21 | #'   \item{kernel}{The kernel specification used}
+  22 | #'   \item{X}{The original data matrix}
+  23 | #'
+  24 | #' @details
+  25 | #' The Nystrom approximation is particularly useful for large datasets where
+  26 | #' computing and storing the full kernel matrix is prohibitive. It selects a subset
+  27 | #' of representative points (landmarks) from the data and constructs a low-rank
+  28 | #' approximation of the full kernel matrix.
+  29 | #'
+  30 | #' Landmark points are selected using mini-batch k-means clustering to ensure
+  31 | #' good coverage of the data space.
+  32 | #'
+  33 | #' @examples
+  34 | #' # Create a dataset
+  35 | #' X <- matrix(rnorm(1000 * 10), nrow = 1000)
+  36 | #'
+  37 | #' # Create a Gaussian kernel
+  38 | #' kernel <- gaussian_kernel(1.0)
+  39 | #'
+  40 | #' # Compute Nystrom approximation
+  41 | #' nystrom <- nystrom_approximation(X, kernel, num_landmarks = 50)
+  42 | #'
+  43 | #' # Predict for new data
+  44 | #' X_new <- matrix(rnorm(100 * 10), nrow = 100)
+  45 | #' pred <- predict(nystrom, X_new)
+  46 | #'
+  47 | #' @export
+  48 | nystrom_approximation <- function(X, kernel, num_landmarks = min(300, nrow(X)/3),
+  49 |                                  regularization = 1e-6, batch_size = 100,
+  50 |                                  max_iterations = 100, seed = 42) {
+  51 |   # Input validation
+  52 |   if (!is.matrix(X)) {
+  53 |     X <- as.matrix(X)
+  54 |   }
+  55 |   
+  56 |   if (nrow(X) == 0 || ncol(X) == 0) {
+  57 |     stop("Input data matrix X cannot be empty")
+  58 |   }
+  59 |   
+  60 |   if (!inherits(kernel, "kernel_spec")) {
+  61 |     stop("kernel must be a valid kernel specification")
+  62 |   }
+  63 |   
+  64 |   if (num_landmarks <= 0) {
+  65 |     stop("Number of landmarks must be positive")
+  66 |   }
+  67 |   
+  68 |   if (num_landmarks > nrow(X)) {
+  69 |     warning("Number of landmarks exceeds number of data points, using all data points as landmarks")
+  70 |     num_landmarks <- nrow(X)
+  71 |   }
+  72 |   
+  73 |   if (regularization < 0) {
+  74 |     stop("Regularization parameter must be non-negative")
+  75 |   }
+  76 |   
+  77 |   if (batch_size <= 0) {
+  78 |     stop("Batch size must be positive")
+  79 |   }
+  80 |   
+  81 |   if (batch_size > nrow(X)) {
+  82 |     batch_size <- nrow(X)
+  83 |   }
+  84 |   
+  85 |   if (max_iterations <= 0) {
+  86 |     stop("Maximum iterations must be positive")
+  87 |   }
+  88 |   
+  89 |   # Set seed for reproducibility
+  90 |   old_seed <- NULL
+  91 |   if (!is.null(seed)) {
+  92 |     old_seed <- .Random.seed
+  93 |     set.seed(seed)
+  94 |   }
+  95 |   
+  96 |   # Compute Nystrom approximation using C++ function
+  97 |   result <- computeNystromApproximation_cpp(
+  98 |     X,
+  99 |     as.integer(num_landmarks),
+ 100 |     kernel,
+ 101 |     regularization,
+ 102 |     as.integer(batch_size),
+ 103 |     as.integer(max_iterations),
+ 104 |     as.integer(seed)
+ 105 |   )
+ 106 |   
+ 107 |   # Restore old seed if needed
+ 108 |   if (!is.null(old_seed)) {
+ 109 |     .Random.seed <- old_seed
+ 110 |   }
+ 111 |   
+ 112 |   # Create return object with class for method dispatch
+ 113 |   nystrom <- list(
+ 114 |     landmarks = result$landmarks,
+ 115 |     K_nm = result$K_nm,
+ 116 |     K_mm_inv = result$K_mm_inv,
+ 117 |     kernel = kernel,
+ 118 |     X = X
+ 119 |   )
+ 120 |   
+ 121 |   class(nystrom) <- "nystrom_approx"
+ 122 |   return(nystrom)
+ 123 | }
+ 124 | 
+ 125 | #' Print method for Nystrom approximation objects
+ 126 | #'
+ 127 | #' @param x Nystrom approximation object
+ 128 | #' @param ... Additional arguments (not used)
+ 129 | #' @return Invisibly returns the object
+ 130 | #' @export
+ 131 | print.nystrom_approx <- function(x, ...) {
+ 132 |   cat("Nystrom Approximation:\n")
+ 133 |   cat(" - Data dimensions:", dim(x$X)[1], "x", dim(x$X)[2], "\n")
+ 134 |   cat(" - Number of landmarks:", nrow(x$landmarks), "\n")
+ 135 |   cat(" - Kernel: ")
+ 136 |   print_kernel(x$kernel)
+ 137 |   invisible(x)
+ 138 | }
+ 139 | 
+ 140 | #' Apply Nystrom approximation to new data points
+ 141 | #'
+ 142 | #' This function applies the Nystrom approximation to new data points,
+ 143 | #' computing an approximate kernel matrix between the new points and the
+ 144 | #' original training data.
+ 145 | #'
+ 146 | #' @param object Nystrom approximation object from `nystrom_approximation()`
+ 147 | #' @param newdata New data matrix (each row is a data point)
+ 148 | #' @param ... Additional arguments (not used)
+ 149 | #' @return Approximate kernel matrix between new data and original data
+ 150 | #'
+ 151 | #' @details
+ 152 | #' The approximation is computed as K_val_train ≈ K_val_m * K_mm^(-1) * K_nm^T,
+ 153 | #' where K_val_m is the kernel matrix between validation points and landmarks.
+ 154 | #'
+ 155 | #' @export
+ 156 | predict.nystrom_approx <- function(object, newdata, ...) {
+ 157 |   if (!is.matrix(newdata)) {
+ 158 |     newdata <- as.matrix(newdata)
+ 159 |   }
+ 160 |   
+ 161 |   if (ncol(newdata) != ncol(object$X)) {
+ 162 |     stop("New data must have the same number of features as the original data")
+ 163 |   }
+ 164 |   
+ 165 |   # Compute kernel matrix between new data and landmarks
+ 166 |   K_val_m <- kernel_matrix(newdata, object$landmarks, object$kernel)
+ 167 |   
+ 168 |   # Approximate K_val_train ≈ K_val_m * K_mm^(-1) * K_nm^T
+ 169 |   K_val_train <- K_val_m %*% object$K_mm_inv %*% t(object$K_nm)
+ 170 |   
+ 171 |   return(K_val_train)
+ 172 | }
+ 173 | 
+ 174 | #' Multiply by the approximated kernel matrix without forming it explicitly
+ 175 | #'
+ 176 | #' This function efficiently computes K * v, where K is the approximated kernel matrix.
+ 177 | #'
+ 178 | #' @param nystrom Nystrom approximation object from `nystrom_approximation()`
+ 179 | #' @param v Vector to multiply with (must have length equal to number of training points)
+ 180 | #' @return Result of K * v
+ 181 | #'
+ 182 | #' @details
+ 183 | #' The multiplication is performed as K * v ≈ K_nm * K_mm^(-1) * K_nm^T * v
+ 184 | #' without explicitly forming the full kernel matrix.
+ 185 | #'
+ 186 | #' @export
+ 187 | nystrom_multiply <- function(nystrom, v) {
+ 188 |   if (!inherits(nystrom, "nystrom_approx")) {
+ 189 |     stop("First argument must be a Nystrom approximation object")
+ 190 |   }
+ 191 |   
+ 192 |   if (!is.numeric(v)) {
+ 193 |     stop("Second argument must be a numeric vector")
+ 194 |   }
+ 195 |   
+ 196 |   if (length(v) != nrow(nystrom$X)) {
+ 197 |     stop("Vector length must match the number of training points")
+ 198 |   }
+ 199 |   
+ 200 |   # Compute K * v ≈ K_nm * K_mm^(-1) * K_nm^T * v
+ 201 |   result <- nystrom$K_nm %*% (nystrom$K_mm_inv %*% (t(nystrom$K_nm) %*% v))
+ 202 |   
+ 203 |   return(result)
+ 204 | }
+ 205 | 
+ 206 | #' Multiply with projection for the Nystrom approximation
+ 207 | #'
+ 208 | #' This function computes P * K * v, where P is a projection matrix
+ 209 | #' P = I - W(W^T W)^(-1)W^T and K is the approximated kernel matrix.
+ 210 | #'
+ 211 | #' @param nystrom Nystrom approximation object from `nystrom_approximation()`
+ 212 | #' @param v Vector to multiply with
+ 213 | #' @param W Matrix of linear features for projection
+ 214 | #' @return Result of P * K * v
+ 215 | #'
+ 216 | #' @details
+ 217 | #' This is useful for orthogonal projection when you want to compute a kernel
+ 218 | #' matrix that is orthogonal to a specific set of features.
+ 219 | #'
+ 220 | #' @export
+ 221 | nystrom_multiply_with_projection <- function(nystrom, v, W) {
+ 222 |   if (!inherits(nystrom, "nystrom_approx")) {
+ 223 |     stop("First argument must be a Nystrom approximation object")
+ 224 |   }
+ 225 |   
+ 226 |   if (!is.numeric(v)) {
+ 227 |     stop("Second argument must be a numeric vector")
+ 228 |   }
+ 229 |   
+ 230 |   if (length(v) != nrow(nystrom$X)) {
+ 231 |     stop("Vector length must match the number of training points")
+ 232 |   }
+ 233 |   
+ 234 |   if (!is.matrix(W)) {
+ 235 |     W <- as.matrix(W)
+ 236 |   }
+ 237 |   
+ 238 |   if (nrow(W) != nrow(nystrom$X)) {
+ 239 |     stop("W must have the same number of rows as the training data")
+ 240 |   }
+ 241 |   
+ 242 |   # Calculate W(W^T W)^(-1)W^T * v
+ 243 |   WtW <- t(W) %*% W
+ 244 |   Wv <- t(W) %*% v
+ 245 |   WtW_inv_Wv <- solve(WtW, Wv)
+ 246 |   W_WtW_inv_Wv <- W %*% WtW_inv_Wv
+ 247 |   
+ 248 |   # Return (I - W(W^T W)^(-1)W^T) * K * v
+ 249 |   result <- nystrom_multiply(nystrom, v - W_WtW_inv_Wv)
+ 250 |   
+ 251 |   return(result)
+ 252 | }
+ 253 | 
+ 254 | #' Compute an approximation of the full kernel matrix using Nystrom method
+ 255 | #'
+ 256 | #' This function computes an approximation of the full kernel matrix.
+ 257 | #' Use with caution for large datasets as it still creates a full n×n matrix.
+ 258 | #'
+ 259 | #' @param nystrom Nystrom approximation object
+ 260 | #' @return Approximated full kernel matrix
+ 261 | #'
+ 262 | #' @details
+ 263 | #' The approximation is computed as K ≈ K_nm * K_mm^(-1) * K_nm^T
+ 264 | #' 
+ 265 | #' @export
+ 266 | nystrom_full_matrix <- function(nystrom) {
+ 267 |   if (!inherits(nystrom, "nystrom_approx")) {
+ 268 |     stop("Argument must be a Nystrom approximation object")
+ 269 |   }
+ 270 |   
+ 271 |   # Calculate K ≈ K_nm * K_mm^(-1) * K_nm^T
+ 272 |   K_approx <- nystrom$K_nm %*% nystrom$K_mm_inv %*% t(nystrom$K_nm)
+ 273 |   
+ 274 |   return(K_approx)
+ 275 | }
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/R/RcppExports.R`:
+
+```R
+   1 | # Generated by using Rcpp::compileAttributes() -> do not edit by hand
+   2 | # Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
+   3 | 
+   4 | #' Compute the kernel matrix between two sets of data points.
+   5 | #'
+   6 | #' @param X1 First set of data points (each row is a data point)
+   7 | #' @param X2 Second set of data points (each row is a data point)
+   8 | #' @param kernel_spec R list describing the kernel
+   9 | #' @return Kernel matrix K
+  10 | kernelMatrix_cpp <- function(X1, X2, kernel_spec) {
+  11 |     .Call(`_flexKernel_kernelMatrix_cpp`, X1, X2, kernel_spec)
+  12 | }
+  13 | 
+  14 | #' Compute the Nystrom approximation of a kernel matrix.
+  15 | #'
+  16 | #' @param X Data matrix (each row is a data point)
+  17 | #' @param num_landmarks Number of landmark points to use
+  18 | #' @param kernel_spec R list describing the kernel
+  19 | #' @param regularization Regularization parameter for inverting K_mm
+  20 | #' @param batch_size Size of mini-batches for k-means
+  21 | #' @param max_iterations Maximum number of iterations for k-means
+  22 | #' @param seed Random seed for initialization
+  23 | #' @return List containing the Nystrom approximation components
+  24 | computeNystromApproximation_cpp <- function(X, num_landmarks, kernel_spec, regularization = 1e-6, batch_size = 100L, max_iterations = 100L, seed = 42L) {
+  25 |     .Call(`_flexKernel_computeNystromApproximation_cpp`, X, num_landmarks, kernel_spec, regularization, batch_size, max_iterations, seed)
+  26 | }
+  27 | 
+  28 | #' Evaluate the kernel function for a single pair of data points.
+  29 | #'
+  30 | #' @param x1 First data point (vector)
+  31 | #' @param x2 Second data point (vector)
+  32 | #' @param kernel_spec R list describing the kernel
+  33 | #' @return Kernel value k(x1, x2)
+  34 | kernelScalar_cpp <- function(x1, x2, kernel_spec) {
+  35 |     .Call(`_flexKernel_kernelScalar_cpp`, x1, x2, kernel_spec)
+  36 | }
+  37 | 
+  38 | #' @title Mini-Batch K-Means Clustering
+  39 | #'
+  40 | #' @description
+  41 | #' Performs mini-batch k-means clustering on a given dataset using the k-means++ initialization method.
+  42 | #' This function is a wrapper around a C++ implementation using RcppEigen for efficiency.
+  43 | #'
+  44 | #' @param XR The data matrix with observations in rows (standard R format).
+  45 | #' @param k The number of clusters.
+  46 | #' @param batch_size The size of each mini-batch.
+  47 | #' @param max_epochs The number of full passes over the dataset.
+  48 | #' @param num_threads The number of OpenMP threads to use for parallel processing.
+  49 | #'
+  50 | #' @return A list with the matrix of cluster centers, a vector of cluster assignments (1-based indices), and a status flag.
+  51 | #'
+  52 | #' @details
+  53 | #' This function implements the mini-batch k-means algorithm, which is an approximation of the standard k-means
+  54 | #' algorithm designed for large datasets. It processes the data in small random subsets (mini-batches) to update
+  55 | #' the cluster centers incrementally, reducing computational cost and memory usage.
+  56 | #'
+  57 | #' The cluster centers are initialized using the k-means++ method, which selects initial centers that are spread out
+  58 | #' across the dataset to improve convergence.
+  59 | #'
+  60 | #' The function uses OpenMP for parallel processing within each mini-batch, leveraging multiple CPU cores to speed up
+  61 | #' computations.
+  62 | #'
+  63 | #' Random selections, including initialization and mini-batch sampling, are performed using R's random number generator
+  64 | #' to ensure reproducibility with \code{set.seed()}.
+  65 | #'
+  66 | #' If any cluster does not receive points during an epoch, it is reinitialized to a random data point to prevent stagnation.
+  67 | #'
+  68 | #' @note The input matrix \code{XR} should have observations in rows and features in columns (standard R format).
+  69 | #' The returned cluster centers have k rows (one per cluster) and the same number of columns as the input data.
+  70 | #'
+  71 | #' @examples
+  72 | #' \dontrun{
+  73 | #' set.seed(123)
+  74 | #' X <- matrix(rnorm(1000 * 10), nrow = 1000)  # 1000 observations, 10 features
+  75 | #' result <- mini_batch_kmeans_rcpp(X, k = 3, batch_size = 100, max_epochs = 10, num_threads = 2)
+  76 | #' if (result$success) {
+  77 | #' print(result$means)  # 3 rows (clusters) × 10 columns (features)
+  78 | #' print(table(result$cluster))  # Distribution of observations across clusters
+  79 | #' } else {
+  80 | #' warning("Mini-batch k-means failed.")
+  81 | #' }
+  82 | #' }
+  83 | #'
+  84 | #' @export
+  85 | mini_batch_kmeans_rcpp <- function(XR, k, batch_size, max_epochs, num_threads = 1L) {
+  86 |     .Call(`_flexKernel_mini_batch_kmeans_rcpp`, XR, k, batch_size, max_epochs, num_threads)
+  87 | }
+  88 | 
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/flexKernel.Rproj`:
+
+```Rproj
+   1 | Version: 1.0
+   2 | ProjectId: 33789bbb-6ce9-4f5e-9514-e8e6bcf7a05b
+   3 | 
+   4 | RestoreWorkspace: No
+   5 | SaveWorkspace: No
+   6 | AlwaysSaveHistory: Default
+   7 | 
+   8 | EnableCodeIndexing: Yes
+   9 | UseSpacesForTab: Yes
+  10 | NumSpacesForTab: 2
+  11 | Encoding: UTF-8
+  12 | 
+  13 | RnwWeave: Sweave
+  14 | LaTeX: LuaLaTeX
+  15 | 
+  16 | AutoAppendNewline: Yes
+  17 | StripTrailingWhitespace: Yes
+  18 | LineEndingConversion: Posix
+  19 | 
+  20 | BuildType: Package
+  21 | PackageUseDevtools: Yes
+  22 | PackageInstallArgs: --no-multiarch --with-keep.source
+  23 | PackageRoxygenize: rd,collate,namespace
+
+```
+
+`/home/stefan/Documents/R_Packages/flexKernel/DESCRIPTION`:
+
+```
+   1 | Package: flexKernel
+   2 | Title: What the Package Does (One Line, Title Case)
+   3 | Version: 0.0.0.9000
+   4 | Authors@R: 
+   5 |     person("Stéfan", "Janse van Rensburg", , "stefanj@mandala.ac.za", role = c("aut", "cre"),
+   6 |            comment = c(ORCID = "0000-0002-0749-2277"))
+   7 | Description: What the package does (one paragraph).
+   8 | License: AGPL (>= 3)
+   9 | Encoding: UTF-8
+  10 | Roxygen: list(markdown = TRUE)
+  11 | RoxygenNote: 7.3.2
+  12 | LinkingTo: 
+  13 |     Rcpp,
+  14 |     RcppEigen
+  15 | Imports: 
+  16 |     Rcpp
+
+```
